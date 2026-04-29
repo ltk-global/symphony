@@ -40,6 +40,25 @@ interface LiveSession {
   session?: AgentSession;
   workspace?: { key: string; path: string };
   verifyTriggeredForState?: string;
+  turnCount: number;
+  lastEventKind?: string;
+  lastMessage?: string;
+  tokens: { inputTokens: number; outputTokens: number; totalTokens: number };
+}
+
+export interface RunningSessionSnapshot {
+  issueId: string;
+  identifier: string;
+  state: string;
+  sessionId?: string;
+  attempt: number | null;
+  startedAtMs: number;
+  lastEventAtMs: number;
+  turnCount: number;
+  lastEventKind?: string;
+  lastMessage?: string;
+  tokens: { inputTokens: number; outputTokens: number; totalTokens: number };
+  workspacePath?: string;
 }
 
 interface RetryEntry {
@@ -70,13 +89,26 @@ export class Orchestrator {
 
   snapshot(): {
     running: number;
-    issues: string[];
+    runningSessions: RunningSessionSnapshot[];
     retrying: Array<{ issueId: string; identifier: string; attempt: number; dueAtMs: number; error: string | null }>;
     codexTotals: { inputTokens: number; outputTokens: number; totalTokens: number };
   } {
     return {
       running: this.live.size,
-      issues: [...this.live.values()].map((entry) => entry.issue.identifier),
+      runningSessions: [...this.live.values()].map((entry) => ({
+        issueId: entry.issue.id,
+        identifier: entry.issue.identifier,
+        state: entry.state,
+        sessionId: entry.session?.sessionId,
+        attempt: entry.attempt,
+        startedAtMs: entry.startedAtMs,
+        lastEventAtMs: entry.lastEventAtMs,
+        turnCount: entry.turnCount,
+        lastEventKind: entry.lastEventKind,
+        lastMessage: entry.lastMessage,
+        tokens: { ...entry.tokens },
+        workspacePath: entry.workspace?.path,
+      })),
       retrying: [...this.retryAttempts.values()].map((entry) => ({
         issueId: entry.issue.id,
         identifier: entry.issue.identifier,
@@ -105,7 +137,16 @@ export class Orchestrator {
     const abort = new AbortController();
     this.clearRetry(issue.id);
     const now = Date.now();
-    this.live.set(issue.id, { issue, abort, state: issue.state, attempt, startedAtMs: now, lastEventAtMs: now });
+    this.live.set(issue.id, {
+      issue,
+      abort,
+      state: issue.state,
+      attempt,
+      startedAtMs: now,
+      lastEventAtMs: now,
+      turnCount: 0,
+      tokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    });
     await this.emitEvent({
       type: "issue_dispatched",
       issue,
@@ -163,15 +204,27 @@ export class Orchestrator {
     try {
       for await (const event of session.events) {
         const live = this.live.get(issue.id);
-        if (live) live.lastEventAtMs = Date.now();
+        if (live) {
+          live.lastEventAtMs = Date.now();
+          live.lastEventKind = event.kind;
+        }
         if (event.kind === "turn_started") {
+          if (live) live.turnCount += 1;
           await this.emitEvent({ type: "turn_started", issue, sessionId: session.sessionId, payload: { turnId: event.turnId } });
         }
         if (event.kind === "message" && event.final) {
           finalMessages.push(event.text);
+          if (live) live.lastMessage = truncate(event.text, 1000);
           await this.emitEvent({ type: "agent_message", issue, sessionId: session.sessionId, payload: { text: truncate(event.text, 8000) } });
         }
-        if (event.kind === "usage") this.addUsage(event);
+        if (event.kind === "usage") {
+          this.addUsage(event);
+          if (live) {
+            live.tokens.inputTokens += event.inputTokens;
+            live.tokens.outputTokens += event.outputTokens;
+            live.tokens.totalTokens += event.totalTokens;
+          }
+        }
         if (event.kind === "tool_call") {
           await this.emitEvent({
             type: "agent_tool_call",
@@ -206,7 +259,14 @@ export class Orchestrator {
           }
         }
         if (event.kind === "turn_completed") {
-          if (event.usage) this.addUsage(event.usage);
+          if (event.usage) {
+            this.addUsage(event.usage);
+            if (live) {
+              live.tokens.inputTokens += event.usage.inputTokens;
+              live.tokens.outputTokens += event.usage.outputTokens;
+              live.tokens.totalTokens += event.usage.totalTokens;
+            }
+          }
           await this.emitEvent({ type: "turn_completed", issue, sessionId: session.sessionId, payload: { usage: event.usage ?? null } });
           const observedState = await this.refreshLiveStateAfterTurn(issue, session);
           if (observedState === "released") break;

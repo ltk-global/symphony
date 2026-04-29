@@ -652,9 +652,40 @@ each time a sink is opened, allowing operators to find the right file via
 
 Rotation/retention is operator-controlled.
 
-### 13.4 Snapshot Interface
+### 13.4 Snapshot Interface (MODIFIED)
 
-Snapshot interface adds:
+`Orchestrator.snapshot()` returns the live state suitable for dashboards and
+the future HTTP `/api/v1/state` endpoint:
+
+```ts
+{
+  running: number;
+  runningSessions: Array<{
+    issueId: string;
+    identifier: string;
+    state: string;
+    sessionId?: string;
+    attempt: number | null;
+    startedAtMs: number;
+    lastEventAtMs: number;
+    turnCount: number;
+    lastEventKind?: string;     // last NormalizedEvent kind seen on this session
+    lastMessage?: string;       // last final agent message, truncated to 1000 chars
+    tokens: { inputTokens: number; outputTokens: number; totalTokens: number };
+    workspacePath?: string;
+  }>;
+  retrying: Array<{
+    issueId: string;
+    identifier: string;
+    attempt: number;
+    dueAtMs: number;            // unix ms when the retry timer fires
+    error: string | null;       // short reason captured at scheduling time
+  }>;
+  codexTotals: { inputTokens: number; outputTokens: number; totalTokens: number };
+}
+```
+
+Future extensions (not yet implemented):
 
 - `iris`: `{ active: int, queued: int, max_concurrent: int, blocked_count: int }`
 - `verify`: `{ active: int, last_pass_count: int, last_fail_count: int }`

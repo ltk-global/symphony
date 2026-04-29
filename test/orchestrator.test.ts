@@ -135,6 +135,42 @@ it("accumulates token totals from completed turns in the runtime snapshot", asyn
   expect(orch.snapshot().codexTotals).toMatchObject({ inputTokens: 10, outputTokens: 5, totalTokens: 15 });
 });
 
+it("snapshot.runningSessions exposes per-session turnCount, tokens, lastMessage, lastEventKind", async () => {
+  let resolveExit!: () => void;
+  const exitGate = new Promise<void>((resolve) => { resolveExit = resolve; });
+  async function* events() {
+    yield { kind: "turn_started", turnId: "t1" } as const;
+    yield { kind: "message", text: "intermediate progress note", final: true } as const;
+    yield { kind: "usage", inputTokens: 12, outputTokens: 6, totalTokens: 18 } as const;
+    await exitGate;
+  }
+  const orch = new Orchestrator({
+    tracker: candidateTracker([{ id: "1", identifier: "a#1", state: "Todo", priority: 1, blockedBy: [] }]),
+    workspace: { prepare: vi.fn(async () => ({ path: "/tmp/ws/a_1", key: "a_1" })) } as any,
+    runner: { start: vi.fn(async () => ({ sessionId: "session-XYZ", events: events(), startTurn: vi.fn(), cancel: vi.fn() })) } as any,
+    renderPrompt: async () => "prompt",
+    config: baseConfig(),
+  });
+
+  await orch.tick();
+  await vi.waitFor(() => {
+    const snap = orch.snapshot();
+    expect(snap.runningSessions).toHaveLength(1);
+    expect(snap.runningSessions[0]!.tokens.totalTokens).toBe(18);
+  });
+
+  const row = orch.snapshot().runningSessions[0]!;
+  expect(row.identifier).toBe("a#1");
+  expect(row.sessionId).toBe("session-XYZ");
+  expect(row.turnCount).toBe(1);
+  expect(row.lastMessage).toBe("intermediate progress note");
+  expect(row.lastEventKind).toBe("usage");
+  expect(row.tokens).toEqual({ inputTokens: 12, outputTokens: 6, totalTokens: 18 });
+  expect(row.workspacePath).toBe("/tmp/ws/a_1");
+
+  resolveExit();
+});
+
 it("emits a structured event trail through dispatch -> turn_completed for each issue", async () => {
   async function* events() {
     yield { kind: "message", text: "hello", final: true } as const;
