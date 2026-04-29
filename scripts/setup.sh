@@ -44,8 +44,18 @@ npm run build
 
 bold "==> Done"
 green "Build OK. Bin: ./node_modules/.bin/symphony (or 'node dist/src/cli.js')."
+
+if [ -t 0 ] && [ -t 1 ]; then
+  echo
+  printf "Run the interactive setup wizard now? (y/N) "
+  read -r answer
+  case "$answer" in
+    y|Y|yes|YES) exec ./scripts/init.sh ;;
+  esac
+fi
+
 echo
-echo "Next steps:"
+echo "Next steps (or run ./scripts/init.sh anytime for an interactive wizard):"
 echo
 echo "  1. Install the agent CLI you plan to use:"
 echo "       claude:  npm install -g @anthropic-ai/claude-code   # then run 'claude' once to log in"

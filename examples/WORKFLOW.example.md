@@ -26,7 +26,7 @@ polling:
   interval_ms: 30000
 
 workspace:
-  root: $HOME/symphony_workspaces
+  root: ~/symphony_workspaces
 
 hooks:
   # Clone the issue's repo into the workspace and check out a working branch.

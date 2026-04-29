@@ -33,34 +33,69 @@ git clone https://github.com/ltk-global/symphony && cd symphony
 ./scripts/setup.sh
 ```
 
-`setup.sh` checks Node 22+ and `git`, runs `npm ci`, builds `dist/`, and
-prints the remaining manual steps. The summary:
+`setup.sh` checks Node 22+ and `git`, runs `npm ci`, builds `dist/`, then
+**offers to launch the interactive wizard** (`./scripts/init.sh`). Say yes
+to the prompt and the wizard handles the rest — including writing your
+`WORKFLOW.md` and starting the daemon. Running `init.sh` directly is the
+fast path; the rest of this document is for operators who want to know
+what's happening behind the prompts, run things manually, or troubleshoot.
 
-| Component | Why it's needed | Install |
+### Prerequisites the wizard checks for
+
+| Component | Why it's needed | Install if missing |
 |---|---|---|
-| **Node 22+** | runtime | `nvm install --lts` (recommended), `brew install node`, or `volta install node@22` |
-| **Claude Code CLI** *(if `agent.kind: claude_code`)* | the orchestrator spawns `claude` per dispatch | `npm install -g @anthropic-ai/claude-code` then run `claude` once to log in |
-| **OpenAI Codex CLI** *(if `agent.kind: codex`)* | the orchestrator spawns `codex app-server` | `npm install -g @openai/codex` or `brew install --cask codex`; first run prompts for ChatGPT/API auth |
-| **`gh`** | the AGENT uses it inside the workspace for Project Status / PR / comment writes | macOS `brew install gh`, Debian `sudo apt install gh`, Fedora `sudo dnf install gh` — then `gh auth login --scopes 'repo,project'` |
+| **Node 22+** | runtime | `nvm install --lts`, `brew install node`, or `volta install node@22` |
+| **`git`** | workspace hooks clone your repos | almost always present; `brew install git` / `sudo apt install git` |
+| **Claude Code CLI** *(if you'll use `agent.kind: claude_code`)* | the orchestrator spawns `claude` per dispatch | `npm install -g @anthropic-ai/claude-code` — then run `claude` once to log in |
+| **OpenAI Codex CLI** *(if you'll use `agent.kind: codex`)* | the orchestrator spawns `codex app-server` | `npm install -g @openai/codex` or `brew install --cask codex`; first run prompts for ChatGPT/API auth |
+| **`gh`** | the **agent** uses it inside each workspace for Project Status / PR / comment writes | macOS `brew install gh`; Debian `sudo apt install gh`; Fedora `sudo dnf install gh`. Then `gh auth login --scopes 'repo,project'`. |
+| **`GITHUB_TOKEN` env var** | the **daemon** uses it for tracker access and workspace clones | generate a PAT or App installation token at github.com/settings/tokens with scopes `repo` and `project` |
 
-Install only the agent CLI matching your workflow's `agent.kind`.
+Install only the agent CLI matching the kind you'll pick in the wizard.
 
 ### Two tokens, two purposes
 
-The daemon and the agent each need GitHub access for different things — and
-they authenticate separately:
+The daemon and the agent each need GitHub access — and they authenticate
+separately:
 
 - **`GITHUB_TOKEN` env var** → used by the **daemon** for tracker GraphQL
   queries and (via the `after_create` hook) for cloning the issue's repo.
-  This is the one in your `WORKFLOW.md`'s `tracker.api_token: $GITHUB_TOKEN`.
-  Required scopes: `repo`, `project`.
+  This is the one referenced as `tracker.api_token: $GITHUB_TOKEN` in
+  `WORKFLOW.md`. Required scopes: `repo`, `project`.
 - **`gh auth login`** → used by the **agent** inside the workspace, to call
   `gh project item-edit`, `gh pr create`, etc. Cached in the agent user's
   home dir. Same scopes.
 
-A bot user is the cleanest pattern: create a GitHub user, give it the scopes
-above, generate a fine-grained PAT for the daemon, and `gh auth login` as
-that user once on the host. One identity for both roles.
+The cleanest pattern is a dedicated bot user: create a GitHub user, give
+it the scopes above, generate a fine-grained PAT for the daemon, and
+`gh auth login` as that user once on the host. One identity for both roles.
+
+### What the wizard writes
+
+Running `./scripts/init.sh` produces a `WORKFLOW.md` (path of your choosing,
+defaults to `./WORKFLOW.md`) that contains:
+
+- `tracker` — pointed at the Project you picked, with the active / terminal /
+  needs-human Status values you confirmed
+- `tracker.filters.assignee` — only set if you provided one
+- `workspace.root` — `~/symphony_workspaces/<project-slug>` by default
+- `hooks.after_create` — clones `${ISSUE_REPO_FULL_NAME}` using `${GITHUB_TOKEN}`
+- `agent` — the kind detected on PATH, with sensible defaults
+- `iris` + `verify` — only when you opt in
+- `server.port` — only when you enable the operator console
+- a Liquid prompt body that walks the agent through Status transitions, branch naming, PR creation, and (if IRIS is on) the `VERIFY_REQUESTED` handshake
+
+The file is intentionally small enough that you can edit it after running
+init — the wizard is a starting point, not a black box.
+
+### Manual path (no wizard)
+
+If you'd rather hand-author:
+
+1. `cp examples/WORKFLOW.example.md ./WORKFLOW.md`
+2. Edit `tracker.project_url`, `tracker.filters.assignee`, IRIS settings (or set `iris.enabled: false` and remove the `verify:` block), `verify.url_static`, the prompt body's repo-specific commands.
+3. `./scripts/preflight.sh ./WORKFLOW.md` — should exit 0.
+4. `node dist/src/cli.js --workflow ./WORKFLOW.md --port 8787`
 
 ## Adding a new repo
 
