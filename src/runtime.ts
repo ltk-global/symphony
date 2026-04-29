@@ -49,6 +49,14 @@ export class SymphonyRuntime {
     return this.components?.config.polling.intervalMs ?? 30_000;
   }
 
+  serviceConfig(): ServiceConfig | null {
+    return this.components?.config ?? null;
+  }
+
+  orchestratorRef(): Orchestrator | null {
+    return this.components?.orchestrator ?? null;
+  }
+
   private async reload(force: boolean): Promise<void> {
     const workflowPath = resolve(this.workflowPath);
     const stats = await stat(workflowPath);

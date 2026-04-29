@@ -14,6 +14,7 @@ const rawSchema = z
     claude_code: z.record(z.string(), z.unknown()).optional(),
     iris: z.record(z.string(), z.unknown()).optional(),
     verify: z.record(z.string(), z.unknown()).optional(),
+    server: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 
@@ -84,6 +85,12 @@ export interface ServiceConfig {
     blockedCommentTemplate: string;
   };
   verify: Record<string, unknown>;
+  server: {
+    port: number | null;
+    host: string;
+    refreshIntervalSec: number;
+    recentEventsLimit: number;
+  };
 }
 
 export function buildConfig(
@@ -188,6 +195,22 @@ export function buildConfig(
       ),
     },
     verify: raw.verify ?? {},
+    server: buildServerConfig(raw.server),
+  };
+}
+
+function buildServerConfig(raw: unknown): ServiceConfig["server"] {
+  const record = (raw && typeof raw === "object" && !Array.isArray(raw)) ? (raw as Record<string, unknown>) : {};
+  const portRaw = record.port;
+  let port: number | null = null;
+  if (portRaw === undefined || portRaw === null) port = null;
+  else if (typeof portRaw === "number" && Number.isFinite(portRaw) && portRaw >= 0 && portRaw <= 65535) port = portRaw;
+  else throw new Error("invalid_server_port");
+  return {
+    port,
+    host: stringValue(record.host, "127.0.0.1"),
+    refreshIntervalSec: positiveNumberValue(record.refresh_interval_sec, 5, "invalid_server_refresh_interval_sec"),
+    recentEventsLimit: positiveNumberValue(record.recent_events_limit, 50, "invalid_server_recent_events_limit"),
   };
 }
 

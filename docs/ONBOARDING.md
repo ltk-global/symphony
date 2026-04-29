@@ -174,11 +174,17 @@ WantedBy=multi-user.target
 
 ## Observability — knowing it's working
 
-> Heads-up: the upstream SPEC §13.7 defines an OPTIONAL HTTP server with a
-> dashboard and `/api/v1/state` endpoint. That extension is **not yet
-> implemented in this fork.** Until it is, observability relies on logs +
-> the `--once` snapshot + preflight. Adding the HTTP server should be the
-> first observability investment when this becomes painful.
+The fork ships full historical + live observability:
+
+- **Durable event log**: every meaningful orchestrator action is appended
+  to `<dataDir>/events.jsonl` (one JSON object per line). Tail it with `jq`
+  filters; nothing is lost when the daemon restarts.
+- **Raw agent stream capture**: every agent turn's raw protocol stream is
+  written to `<dataDir>/turns/<issueId>/<isoTs>-t<seq>.jsonl`, surviving
+  workspace cleanup. Useful when an agent goes off the rails and you need
+  the literal output to forensically reconstruct what happened.
+- **Operator console** (HTTP, optional): a server-rendered dashboard at
+  `127.0.0.1:<port>` with a JSON API. See "Operator Console" below.
 
 ### Live: logs
 
@@ -202,24 +208,38 @@ LOG_LEVEL=debug node dist/src/cli.js --workflow ./WORKFLOW.md
 
 ### Live: snapshot
 
-`Orchestrator.snapshot()` returns the current dispatch picture:
+`Orchestrator.snapshot()` returns the current dispatch picture: `running`
+count, `runningSessions[]` with per-session `turnCount`/`tokens`/
+`lastEventKind`/`lastMessage`/`workspacePath`, `retrying[]`, and cumulative
+`codexTotals`. Read it via `GET /api/v1/state` (when the console server is
+on) or via `--once` (note: also dispatches).
 
-```jsonc
-{
-  "running": 2,
-  "issues": ["repo#42", "repo#57"],
-  "retrying": [
-    { "issueId": "...", "identifier": "repo#11", "attempt": 2,
-      "dueAtMs": 1730000000000, "error": "turn_failed: rate_limited" }
-  ],
-  "codexTotals": { "inputTokens": 5000, "outputTokens": 2400, "totalTokens": 7400 }
-}
+For a side-effect-free peek, run `./scripts/preflight.sh` — it reports
+candidate count without starting any sessions.
+
+### Operator Console
+
+Enable with `--port 8787` or `server: { port: 8787 }` in the workflow:
+
+```bash
+node dist/src/cli.js --workflow ./WORKFLOW.md --port 8787
 ```
 
-Today the only way to read this is via `--once` mode (which also dispatches),
-or by adding the HTTP server extension. If you want a *peek* without
-dispatching anything, run `./scripts/preflight.sh` — it reports
-candidate count without starting any sessions.
+Then visit `http://127.0.0.1:8787/`. You get:
+
+- **Index** — running sessions table, retry queue, recent 50 events feed,
+  cumulative token totals. Auto-refreshes every 5 seconds.
+- **Per-issue** at `/issues/<identifier>` — full timeline of every event
+  for that issue, grouped by session, plus links to raw turn captures.
+- **Raw turn viewer** at `/issues/<id>/turns/<file>` — the literal stream-
+  json or codex JSON-RPC for one turn.
+- **JSON API**:
+  - `GET /api/v1/state` — full snapshot + recent events
+  - `GET /api/v1/issues/<identifier>` — per-issue with timeline + turn list
+  - `POST /api/v1/refresh` — force an immediate tick
+
+The server binds to `127.0.0.1` by default. It is single-user, no auth, do
+not expose it over a network without a tunnel.
 
 ### Post-hoc: where to look when an agent misbehaves
 
@@ -233,19 +253,16 @@ candidate count without starting any sessions.
   output for a session, run the daemon under `script(1)` or pipe stderr to
   a file via systemd/launchd, then grep for the session's identifier.
 
-### Known observability gaps (compared to upstream SPEC §13)
+### Status against upstream SPEC §13
 
 | SPEC ref | Status |
 |---|---|
-| §13.1 Structured log conventions | implemented (`issueId`, `issueIdentifier`, `sessionId` on all relevant lines) |
-| §13.3 Snapshot interface | partial — has `running` count + `retrying` + `codexTotals`; missing `turn_count`, `last_event`, `last_message`, per-session `started_at`, rate limits |
-| §13.4 Status surface | not implemented |
-| §13.5 Token accounting | partial — orchestrator accumulates totals; doesn't dedupe absolute vs delta payloads per spec |
-| §13.7 HTTP server `/`, `/api/v1/state`, `/api/v1/<id>`, `/api/v1/refresh` | **not implemented** |
-
-Build the HTTP server when tail/jq stops scaling — once two or three repos
-are live and you find yourself wanting to see "what's running across all
-daemons" without SSH'ing into the host.
+| §13.1 Structured log conventions | implemented |
+| §13.2 Event log file shape | implemented (`<dataDir>/events.jsonl`) |
+| §13.3 Raw agent stream capture | implemented (`<dataDir>/turns/<id>/...jsonl`) |
+| §13.5 HTTP server + dashboard | implemented (this fork extends §13.7) |
+| §13.6 Snapshot interface | enriched per-session detail; rate limits / iris counters TBD |
+| §13.5 (upstream) Token accounting | partial — totals accumulate; absolute vs delta dedup is a TODO |
 
 ## Common failure modes
 

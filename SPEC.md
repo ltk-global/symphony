@@ -652,7 +652,41 @@ each time a sink is opened, allowing operators to find the right file via
 
 Rotation/retention is operator-controlled.
 
-### 13.4 Snapshot Interface (MODIFIED)
+### 13.5 Operator Console HTTP Server (IMPLEMENTED — extension)
+
+The fork implements the §13.7 HTTP extension from upstream. It is OPTIONAL
+and disabled by default; turn it on with either:
+
+- workflow front matter: `server: { port: 8787 }`
+- CLI flag: `--port 8787` (overrides front matter)
+
+The server binds to `127.0.0.1` by default. Override host via
+`server.host` in front matter. Refresh cadence is `server.refresh_interval_sec`
+(default 5) for the auto-refreshing HTML, and `server.recent_events_limit`
+(default 50) for how many events to tail on the index page.
+
+#### Endpoints
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/` | HTML dashboard — running sessions table, retry queue, recent events feed, header strip with cumulative metrics |
+| GET | `/issues/<identifier>` | HTML per-issue page — facts, full event timeline grouped by session, links to raw turn captures |
+| GET | `/issues/<identifier>/turns/<filename>` | HTML viewer for a single raw turn JSONL file |
+| GET | `/api/v1/state` | JSON `{ generatedAt, workflowPath, dataDir, counts, running, retrying, codexTotals, recentEvents }` |
+| GET | `/api/v1/issues/<identifier>` | JSON `{ identifier, issueId, live, retry, events, turnFiles }` |
+| POST | `/api/v1/refresh` | 202 + `{ queued: true, requestedAt, operations: ["poll", "reconcile"] }`. Triggers an immediate `Orchestrator.tick()`. |
+
+Path segments are decoded individually after route matching (not on the
+full pathname) and rejected if they contain `/`, `\`, `..`, or NUL — so an
+encoded traversal like `..%2F..%2Fevents.jsonl` returns 400 rather than
+escaping the data dir.
+
+The HTML is fully server-rendered; the only client-side JS is a 30-line
+relative-time formatter that updates `data-rel-ts` and `data-due-ts`
+attributes once per second. Auto-refresh uses `<meta http-equiv="refresh">`,
+not WebSockets or SSE.
+
+### 13.6 Snapshot Interface (MODIFIED)
 
 `Orchestrator.snapshot()` returns the live state suitable for dashboards and
 the future HTTP `/api/v1/state` endpoint:
