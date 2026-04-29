@@ -5,3 +5,7 @@ coverage/
 firebase-debug.log
 .playwright-mcp/
 .claude/
+# wizard-generated secrets per workflow slug
+scripts/.*-secrets.env
+# wizard-generated tunnel helpers (operator-specific URLs)
+scripts/tunnel-*.sh
