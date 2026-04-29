@@ -134,7 +134,7 @@ export async function buildRuntimeComponents(workflowPath: string, env: NodeJS.P
     iris: iris ?? undefined,
     config,
     eventLog,
-    renderPrompt: ({ issue, attempt, tools }) => renderPrompt(workflow.promptTemplate, { issue, attempt, tools }),
+    renderPrompt: ({ issue, attempt, tools }) => renderPrompt(workflow.promptTemplate, { issue: aliasIssue(issue), attempt, tools }),
   });
   return { config, orchestrator, tracker, workspace, eventLog };
 }
@@ -159,6 +159,20 @@ export async function cleanupTerminalWorkspaces(
       log.warn({ error, issue_id: issue.id, issue_identifier: issue.identifier }, "startup terminal workspace cleanup failed");
     }
   }
+}
+
+// Liquid templates often want snake_case (the SPEC §5.3.2 env-var convention).
+// The Issue type uses camelCase. Expose both so either spelling resolves.
+function aliasIssue(issue: import("./types.js").Issue): Record<string, unknown> {
+  return {
+    ...issue,
+    content_id: issue.contentId,
+    repo_full_name: issue.repoFullName,
+    branch_name: issue.branchName,
+    blocked_by: issue.blockedBy,
+    created_at: issue.createdAt,
+    updated_at: issue.updatedAt,
+  };
 }
 
 function configureIrisEnvironment(config: ServiceConfig, env: NodeJS.ProcessEnv): void {

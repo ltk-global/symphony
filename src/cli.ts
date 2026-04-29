@@ -38,7 +38,7 @@ program
       return;
     }
 
-    await runtime.tick();
+    await runtime.tick().catch((error) => log.error({ error }, "initial poll tick failed; daemon continuing"));
     const schedule = () => {
       setTimeout(() => {
         runtime

@@ -157,11 +157,24 @@ export class Orchestrator {
       await this.emitEvent({ type: "workspace_prepared", issue, payload: { path: workspace.path, key: workspace.key } });
       const toolAvailability = this.toolAvailability();
       const tools = this.buildToolSpecs();
-      const prompt = await this.options.renderPrompt({
-        issue,
-        attempt,
-        tools: toolAvailability,
-      });
+      let prompt: string;
+      try {
+        prompt = await this.options.renderPrompt({
+          issue,
+          attempt,
+          tools: toolAvailability,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.live.delete(issue.id);
+        await this.emitEvent({
+          type: "dispatch_failed",
+          issue,
+          payload: { stage: "render_prompt", error: message, attempt },
+        });
+        this.scheduleRetry(issue, nextFailureAttempt(attempt), `render_prompt: ${message}`);
+        return;
+      }
       await this.options.workspace.beforeRun?.(workspace, issue, attempt);
       const turnRecorder = this.options.config.dataDir ? new TurnRecorder({ dataDir: this.options.config.dataDir, issueId: issue.id }) : null;
       const openTurnSink = turnRecorder
