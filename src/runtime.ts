@@ -11,6 +11,7 @@ import { IrisClient } from "./iris/client.js";
 import { VerifyStage } from "./verify/stage.js";
 import { FileEventLog, type EventLog } from "./observability/event_log.js";
 import { eventLogPath } from "./observability/data_dir.js";
+import { EventHookRunner } from "./hooks/event_hooks.js";
 import { log } from "./log.js";
 
 export interface RuntimeComponents {
@@ -77,7 +78,13 @@ export async function buildRuntimeComponents(workflowPath: string, env: NodeJS.P
   const workflow = await loadWorkflow(absoluteWorkflowPath);
   const config = buildConfig(workflow.config, env, { baseDir: dirname(absoluteWorkflowPath), workflowPath: absoluteWorkflowPath });
   configureIrisEnvironment(config, env);
-  const eventLog: EventLog = new FileEventLog(eventLogPath(config.dataDir));
+  const fileEventLog = new FileEventLog(eventLogPath(config.dataDir));
+  const eventLog: EventLog = fileEventLog;
+  const hookRunner = new EventHookRunner({ rules: config.hooks.onEvent });
+  if (hookRunner.ruleCount > 0) {
+    fileEventLog.setObserver((event) => hookRunner.fire(event));
+    log.info({ ruleCount: hookRunner.ruleCount }, "event hooks registered");
+  }
   await eventLog.emit({
     type: "daemon_reload",
     payload: {
@@ -85,6 +92,7 @@ export async function buildRuntimeComponents(workflowPath: string, env: NodeJS.P
       dataDir: config.dataDir,
       agentKind: config.agent.kind,
       irisEnabled: config.iris.enabled,
+      eventHookRuleCount: hookRunner.ruleCount,
     },
   });
   const tracker = new GitHubProjectsTracker({

@@ -33,15 +33,34 @@ git clone https://github.com/ltk-global/symphony && cd symphony
 ./scripts/setup.sh
 ```
 
-`setup.sh` checks Node 22+, runs `npm ci`/`npm install`, builds `dist/`, and
-prints the remaining manual steps:
+`setup.sh` checks Node 22+ and `git`, runs `npm ci`, builds `dist/`, and
+prints the remaining manual steps. The summary:
 
-1. Install the agent CLI: `npm install -g @anthropic-ai/claude-code` (or
-   whatever installs your `codex` binary).
-2. Install + auth `gh`: `brew install gh && gh auth login --scopes 'repo,project,read:project'`.
-3. Export `GITHUB_TOKEN` (and `IRIS_TOKEN` if you'll enable IRIS).
-4. Author or copy a `WORKFLOW.md` for your project.
-5. Run `./scripts/preflight.sh <path>` before starting the daemon.
+| Component | Why it's needed | Install |
+|---|---|---|
+| **Node 22+** | runtime | `nvm install --lts` (recommended), `brew install node`, or `volta install node@22` |
+| **Claude Code CLI** *(if `agent.kind: claude_code`)* | the orchestrator spawns `claude` per dispatch | `npm install -g @anthropic-ai/claude-code` then run `claude` once to log in |
+| **OpenAI Codex CLI** *(if `agent.kind: codex`)* | the orchestrator spawns `codex app-server` | `npm install -g @openai/codex` or `brew install --cask codex`; first run prompts for ChatGPT/API auth |
+| **`gh`** | the AGENT uses it inside the workspace for Project Status / PR / comment writes | macOS `brew install gh`, Debian `sudo apt install gh`, Fedora `sudo dnf install gh` — then `gh auth login --scopes 'repo,project'` |
+
+Install only the agent CLI matching your workflow's `agent.kind`.
+
+### Two tokens, two purposes
+
+The daemon and the agent each need GitHub access for different things — and
+they authenticate separately:
+
+- **`GITHUB_TOKEN` env var** → used by the **daemon** for tracker GraphQL
+  queries and (via the `after_create` hook) for cloning the issue's repo.
+  This is the one in your `WORKFLOW.md`'s `tracker.api_token: $GITHUB_TOKEN`.
+  Required scopes: `repo`, `project`.
+- **`gh auth login`** → used by the **agent** inside the workspace, to call
+  `gh project item-edit`, `gh pr create`, etc. Cached in the agent user's
+  home dir. Same scopes.
+
+A bot user is the cleanest pattern: create a GitHub user, give it the scopes
+above, generate a fine-grained PAT for the daemon, and `gh auth login` as
+that user once on the host. One identity for both roles.
 
 ## Adding a new repo
 
@@ -100,12 +119,16 @@ will refuse to start (config) or fail at first tick (tracker).
 
 ## Running the daemon
 
-### Foreground (development)
+### Foreground (development), with the operator console
 
 ```bash
 GITHUB_TOKEN=ghp_... LOG_LEVEL=info \
-  node dist/src/cli.js --workflow /path/to/WORKFLOW.md
+  node dist/src/cli.js --workflow /path/to/WORKFLOW.md --port 8787
 ```
+
+`--port 8787` enables the operator console at `http://127.0.0.1:8787/`. You
+can also set it in front matter: `server: { port: 8787 }`. Omit `--port`
+entirely for a headless daemon.
 
 ### One tick and exit (manual sweep / cron)
 
@@ -116,9 +139,26 @@ node dist/src/cli.js --workflow /path/to/WORKFLOW.md --once
 `--once` will *dispatch* anything that's eligible. Don't use it as a
 preflight — use `scripts/preflight.sh` for that.
 
+### Where everything lives
+
+For a workflow at `/path/to/WORKFLOW.md`:
+
+| Path | What's there | Lifetime |
+|---|---|---|
+| `~/.symphony/<sha256(path)[:12]>/events.jsonl` | every orchestrator event, append-only | until you rotate it |
+| `~/.symphony/<sha256(path)[:12]>/turns/<issueId>/<ts>-t<seq>.jsonl` | raw stream-json from each agent turn | until you rotate it |
+| `<workspace.root>/<sanitized issue id>/` | per-issue git workspace, recreated per dispatch | removed when issue hits a `terminal_state` |
+| stdout (pino JSON) | structured log lines | wherever you redirect — systemd journal, launchd `StandardOutPath`, etc. |
+
+Override the data dir with top-level `data_dir:` in front matter (accepts
+`~`, absolute paths, and `$VAR`). You can find the resolved dir at runtime
+via `GET /api/v1/state` (the `dataDir` field) or by reading the
+`daemon_reload` event.
+
 ### Long-running service
 
-There's no Dockerfile or service unit shipped. Two minimal recipes:
+There's no Dockerfile or service unit shipped. Two minimal recipes — both
+include `--port` so the operator console comes up automatically.
 
 #### macOS launchd
 
@@ -132,8 +172,8 @@ There's no Dockerfile or service unit shipped. Two minimal recipes:
   <key>ProgramArguments</key><array>
     <string>/usr/local/bin/node</string>
     <string>/Users/you/symphony/dist/src/cli.js</string>
-    <string>--workflow</string>
-    <string>/Users/you/work/WORKFLOW.md</string>
+    <string>--workflow</string><string>/Users/you/work/WORKFLOW.md</string>
+    <string>--port</string><string>8787</string>
   </array>
   <key>EnvironmentVariables</key><dict>
     <key>GITHUB_TOKEN</key><string>ghp_...</string>
@@ -159,7 +199,9 @@ After=network-online.target
 
 [Service]
 ExecStartPre=/opt/symphony/scripts/preflight.sh /opt/symphony/WORKFLOW.md
-ExecStart=/usr/bin/node /opt/symphony/dist/src/cli.js --workflow /opt/symphony/WORKFLOW.md
+ExecStart=/usr/bin/node /opt/symphony/dist/src/cli.js \
+  --workflow /opt/symphony/WORKFLOW.md \
+  --port 8787
 Environment=GITHUB_TOKEN=ghp_...
 Environment=LOG_LEVEL=info
 Restart=on-failure
@@ -241,17 +283,41 @@ Then visit `http://127.0.0.1:8787/`. You get:
 The server binds to `127.0.0.1` by default. It is single-user, no auth, do
 not expose it over a network without a tunnel.
 
-### Post-hoc: where to look when an agent misbehaves
+### Post-hoc: when an agent misbehaves
 
-- **Workspace state** at the moment of failure: `<workspace.root>/<key>` is
-  not deleted on failure. Inspect the git tree, run the agent's last command
-  manually, etc.
-- **Daemon log lines** for that issue: filter by `issueIdentifier`.
-- **Agent stdout/stderr** is not currently captured to disk by the
-  orchestrator. The Claude Code adapter consumes the stream-JSON internally
-  and emits normalized events; raw text is lost. If you need raw agent
-  output for a session, run the daemon under `script(1)` or pipe stderr to
-  a file via systemd/launchd, then grep for the session's identifier.
+You have three forensic surfaces, in order of usefulness:
+
+1. **Per-issue page in the operator console** at `/issues/<identifier>` —
+   timeline of every orchestrator event for that issue, grouped by session,
+   with direct links to each turn's raw capture. Start here.
+2. **Raw turn captures** at `<dataDir>/turns/<issueId>/<ts>-t<seq>.jsonl` —
+   the literal stream-json from `claude` or the JSON-RPC stream from
+   `codex` (with `>>> ` for outgoing requests, `<<< ` for incoming
+   notifications). Survives workspace cleanup.
+3. **The workspace itself** at `<workspace.root>/<key>/` — not removed on
+   failure. Use it to reproduce the agent's last `git`/`gh`/`npm` command
+   or inspect the working tree.
+
+If the daemon itself died, the structured pino log lines (with `issueId` /
+`issueIdentifier` / `sessionId` fields) are in stdout — capture them via
+your service unit's `StandardOutPath` / journald.
+
+### Token cost monitoring
+
+Per-issue and cumulative token spend live in two places:
+
+- **Live**: `Orchestrator.snapshot().codexTotals` (cumulative since last
+  daemon start) and per-session `tokens.{input,output,total}`. Both visible
+  on the dashboard header strip and in `GET /api/v1/state`.
+- **Historical**: `events.jsonl` records `usage` on every `turn_completed`.
+  Aggregate per repo:
+
+  ```bash
+  jq -r 'select(.type=="turn_completed" and .payload.usage)
+         | [.issueIdentifier, .payload.usage.totalTokens] | @tsv' \
+    ~/.symphony/<hash>/events.jsonl \
+    | awk '{sum[$1]+=$2} END{for(k in sum) printf "%-40s %d\n", k, sum[k]}'
+  ```
 
 ### Status against upstream SPEC §13
 
@@ -276,12 +342,110 @@ not expose it over a network without a tunnel.
 | Items dispatched but Status never changes | the agent isn't using `gh` to transition Status | the orchestrator does NOT move Status itself except for verify; tell the agent in `claude_code.append_system_prompt` |
 | `iris.enabled: true` and verify always says "no URL" | the agent isn't emitting `verify_url` in its final JSON line, AND no `deploy:` label, AND no `verify.url_static` | check the prompt body, add `verify.url_static` as a fallback |
 | Daemon eats CPU after a config change | hot-reload triggered while sessions were running, then errored — last-known-good config kept serving | check logs for `workflow reload failed`; fix the config and trigger a quiet moment |
+| Operator console says "no events yet" | `events.jsonl` doesn't exist or the daemon hasn't ticked yet | wait one poll interval; if the file path is wrong, check the `daemon_reload` event in the log or `GET /api/v1/state.dataDir` |
+| Token totals seem too high | `usage` events are summed per emit; absolute-vs-delta dedup is a known TODO | sanity-check by summing only `turn_completed` events from `events.jsonl` (see "Token cost monitoring" above) |
+| Operator console is unreachable | server crashed silently or wasn't enabled | check `symphony.err.log` for "console_server listening"; confirm `--port` or `server.port` is set |
 
 ## Multi-daemon hygiene (Pattern B)
 
 If you're running more than one daemon on the same host:
 
-- Use **distinct `workspace.root`** per daemon (e.g. `~/.symphony/projA`, `~/.symphony/projB`). The workspace key sanitizer is per-daemon — collisions between daemons would silently overlay.
-- Use **distinct service unit names** (`symphony-projA.service`, `symphony-projB.service`).
-- IRIS concurrency is **not** shared across daemons by default. If you want a global IRIS budget, set `iris.max_concurrent` per-daemon to (global budget / N) — the file semaphore is keyed per Symphony invocation, not per host.
-- Don't share `GITHUB_TOKEN` for unrelated repos if you can avoid it; use one bot per major boundary.
+- **Distinct `workspace.root`** per daemon (e.g. `~/.symphony/projA-ws`,
+  `~/.symphony/projB-ws`). The workspace key sanitizer is per-daemon —
+  daemons sharing a workspace root would silently overlay each other on
+  same-numbered identifiers.
+- **Distinct ports** for each daemon's operator console
+  (`--port 8787`, `--port 8788`, …) — or rely on the cross-daemon
+  aggregator described below to merge them under one dashboard.
+- **Distinct service unit names** (`symphony-projA.service`,
+  `symphony-projB.service`).
+- **IRIS concurrency IS shared cross-process** if both daemons target the
+  same `iris.base_url`. The file semaphore lives at
+  `<tmpdir>/symphony_iris_locks/iris_<sanitized-base-url>/` and uses
+  `mkdir`-based exclusion that works across PIDs. Caveat: the slot count
+  is determined by whichever daemon's `iris.max_concurrent` runs first —
+  set them all to the same value to avoid surprises. Different
+  `base_url`s → different locks → no sharing.
+- **Don't share `GITHUB_TOKEN`** for unrelated repos if you can avoid it;
+  use one bot per major boundary.
+
+For a unified dashboard across daemons see the next section.
+
+## Cross-daemon aggregator
+
+When you have more than one daemon, run `symphony-aggregator` for a single
+view of the fleet:
+
+```bash
+# /etc/symphony/aggregator.yaml
+port: 9000
+host: 127.0.0.1
+poll_interval_ms: 5000
+daemons:
+  - name: projA
+    url: http://127.0.0.1:8787
+  - name: projB
+    url: http://127.0.0.1:8788
+```
+
+```bash
+node dist/src/cli-aggregator.js --config /etc/symphony/aggregator.yaml
+# or, after npm link:
+symphony-aggregator --config /etc/symphony/aggregator.yaml
+```
+
+Visit `http://127.0.0.1:9000/`:
+
+- **Daemons table** — one row per daemon, reachable/unreachable, last-seen.
+- **Running sessions** across the fleet, tagged with daemon name; rows
+  link out to that daemon's per-issue page in a new tab.
+- **Retry queue** across the fleet.
+- **Recent events** merged + ts-sorted across all reachable daemons.
+
+The aggregator polls each daemon's `/api/v1/state` independently. A daemon
+being down only marks that one daemon unreachable — the rest keep
+serving. Per-daemon poll timeout defaults to 3s and can't block the poll
+cycle. The aggregator never proxies to per-issue or raw turn pages; clicks
+go to the originating daemon directly.
+
+## Alerting hooks
+
+For event-driven notifications (Slack, PagerDuty, anything you can shell
+out to), declare `hooks.on_event` rules in the workflow:
+
+```yaml
+hooks:
+  on_event:
+    - name: slack-on-blocked
+      types: [iris_blocked_handed_off, dispatch_failed, verify_terminal_failed]
+      script: |
+        curl -fsS -X POST "$SLACK_WEBHOOK_URL" \
+          -H 'content-type: application/json' \
+          -d "{\"text\":\":rotating_light: $SYMPHONY_EVENT_TYPE on $SYMPHONY_ISSUE_IDENTIFIER\"}"
+      timeout_ms: 5000
+
+    - name: archive-all
+      types: ["*"]
+      script: |
+        printf '%s\n' "$SYMPHONY_EVENT_PAYLOAD" >> /var/log/symphony/audit.jsonl
+```
+
+Available env vars in the script:
+
+| Variable | Always set | Notes |
+|---|---|---|
+| `SYMPHONY_EVENT_TYPE` | yes | e.g. `iris_blocked_handed_off` |
+| `SYMPHONY_EVENT_TS` | yes | ISO 8601 |
+| `SYMPHONY_ISSUE_ID` | when the event names an issue | GitHub Project item id |
+| `SYMPHONY_ISSUE_IDENTIFIER` | when the event names an issue | human-readable like `repo#42` |
+| `SYMPHONY_SESSION_ID` | session-scoped events | |
+| `SYMPHONY_TURN_SEQ` | turn-scoped events | |
+| `SYMPHONY_EVENT_PAYLOAD` | yes | full payload as JSON, or `{}` |
+
+Hooks are fire-and-forget. They never block the daemon, never fail a turn,
+never cause a missed event in `events.jsonl`. A hook that exits non-zero
+or hits its timeout (default 10s, override per-rule) is logged at warn
+level and forgotten. Use this for alerts, not for state machines.
+
+For matching: list specific event types, or use `"*"` to match every
+event the orchestrator emits. See SPEC §13.2 for the full event vocabulary.

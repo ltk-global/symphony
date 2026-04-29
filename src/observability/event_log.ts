@@ -32,11 +32,19 @@ export interface EventReadFilter {
 export class FileEventLog implements EventLog {
   private writes: Promise<void> = Promise.resolve();
   private dirEnsured = false;
+  private onEvent?: (event: SymphonyEvent) => void;
 
-  constructor(private readonly path: string) {}
+  constructor(private readonly path: string, options: { onEvent?: (event: SymphonyEvent) => void } = {}) {
+    this.onEvent = options.onEvent;
+  }
+
+  setObserver(onEvent: (event: SymphonyEvent) => void): void {
+    this.onEvent = onEvent;
+  }
 
   async emit(event: EventInput): Promise<void> {
-    const line = JSON.stringify({ ts: new Date().toISOString(), ...event }) + "\n";
+    const enriched: SymphonyEvent = { ts: new Date().toISOString(), ...event };
+    const line = JSON.stringify(enriched) + "\n";
     this.writes = this.writes
       .then(async () => {
         if (!this.dirEnsured) {
@@ -48,6 +56,11 @@ export class FileEventLog implements EventLog {
       .catch((error) => {
         log.error({ error, path: this.path }, "event_log write failed");
       });
+    try {
+      this.onEvent?.(enriched);
+    } catch (error) {
+      log.warn({ error, eventType: enriched.type }, "event_log observer threw");
+    }
     await this.writes;
   }
 
@@ -79,9 +92,24 @@ export class FileEventLog implements EventLog {
 
 export class MemoryEventLog implements EventLog {
   private readonly events: SymphonyEvent[] = [];
+  private onEvent?: (event: SymphonyEvent) => void;
+
+  constructor(options: { onEvent?: (event: SymphonyEvent) => void } = {}) {
+    this.onEvent = options.onEvent;
+  }
+
+  setObserver(onEvent: (event: SymphonyEvent) => void): void {
+    this.onEvent = onEvent;
+  }
 
   async emit(event: EventInput): Promise<void> {
-    this.events.push({ ts: new Date().toISOString(), ...event });
+    const enriched: SymphonyEvent = { ts: new Date().toISOString(), ...event };
+    this.events.push(enriched);
+    try {
+      this.onEvent?.(enriched);
+    } catch {
+      // tests may pass throwing observers; swallow to keep parity with FileEventLog
+    }
   }
 
   async drain(): Promise<void> {}

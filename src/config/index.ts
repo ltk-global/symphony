@@ -46,6 +46,12 @@ export interface ServiceConfig {
     afterRun?: string;
     beforeRemove?: string;
     timeoutMs: number;
+    onEvent: Array<{
+      name: string;
+      types: string[];
+      script: string;
+      timeoutMs: number;
+    }>;
   };
   agent: {
     kind: "codex" | "claude_code";
@@ -149,6 +155,7 @@ export function buildConfig(
       afterRun: optionalString(raw.hooks?.after_run),
       beforeRemove: optionalString(raw.hooks?.before_remove),
       timeoutMs: positiveNumberValue(raw.hooks?.timeout_ms, 60_000, "invalid_hooks_timeout_ms"),
+      onEvent: parseEventHooks((raw.hooks ?? {}).on_event),
     },
     agent: {
       kind: agentKind,
@@ -197,6 +204,25 @@ export function buildConfig(
     verify: raw.verify ?? {},
     server: buildServerConfig(raw.server),
   };
+}
+
+function parseEventHooks(raw: unknown): ServiceConfig["hooks"]["onEvent"] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new Error("invalid_hooks_on_event");
+  return raw.map((rule, index) => {
+    if (!rule || typeof rule !== "object" || Array.isArray(rule)) throw new Error("invalid_hooks_on_event_rule");
+    const r = rule as Record<string, unknown>;
+    const types = stringArray(r.types, []);
+    if (types.length === 0) throw new Error("invalid_hooks_on_event_types");
+    const script = typeof r.script === "string" ? r.script.trim() : "";
+    if (!script) throw new Error("invalid_hooks_on_event_script");
+    return {
+      name: typeof r.name === "string" && r.name.length > 0 ? r.name : `rule_${index + 1}`,
+      types,
+      script,
+      timeoutMs: positiveNumberValue(r.timeout_ms, 10_000, "invalid_hooks_on_event_timeout_ms"),
+    };
+  });
 }
 
 function buildServerConfig(raw: unknown): ServiceConfig["server"] {

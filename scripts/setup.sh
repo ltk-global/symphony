@@ -48,22 +48,35 @@ echo
 echo "Next steps:"
 echo
 echo "  1. Install the agent CLI you plan to use:"
-echo "       claude:  npm install -g @anthropic-ai/claude-code"
-echo "       codex:   (whatever installer your codex distribution uses)"
+echo "       claude:  npm install -g @anthropic-ai/claude-code   # then run 'claude' once to log in"
+echo "       codex:   npm install -g @openai/codex               # OR: brew install --cask codex"
 echo
-echo "  2. Install gh and authenticate (the agent uses it inside the workspace):"
-echo "       brew install gh && gh auth login --scopes 'repo,project,read:project'"
+echo "     The agent CLI is what the orchestrator spawns inside each workspace."
+echo "     Install only the one matching agent.kind in your WORKFLOW.md."
 echo
-echo "  3. Export env vars in your shell or a service unit:"
-echo "       export GITHUB_TOKEN=ghp_..."
-echo "       export IRIS_TOKEN=swm_...   # only if iris.enabled in workflow"
-echo "       export LOG_LEVEL=info       # or debug"
+echo "  2. Install gh — the AGENT uses it inside the workspace to update Project"
+echo "     Status, open PRs, and post comments (NOT the daemon)."
+echo "       macOS:    brew install gh"
+echo "       Debian:   sudo apt install gh         # see cli.github.com for older distros"
+echo "       Fedora:   sudo dnf install gh"
+echo "     Then authenticate once: gh auth login --scopes 'repo,project'"
+echo
+echo "  3. Export env vars in your shell or service unit. GITHUB_TOKEN is for the"
+echo "     DAEMON — tracker auth + workspace clones — separate from gh's own auth."
+echo "       export GITHUB_TOKEN=ghp_...    # PAT or App installation token"
+echo "       export IRIS_TOKEN=swm_...      # only if iris.enabled in workflow"
+echo "       export LOG_LEVEL=info          # or debug"
 echo
 echo "  4. Copy and edit the example workflow for your project:"
 echo "       cp examples/WORKFLOW.example.md /path/to/your/WORKFLOW.md"
 echo
-echo "  5. Validate config and connectivity without dispatching anything:"
+echo "  5. Validate config and GitHub Projects connectivity without dispatching:"
 echo "       ./scripts/preflight.sh /path/to/your/WORKFLOW.md"
 echo
-echo "  6. Run the daemon:"
-echo "       node dist/src/cli.js --workflow /path/to/your/WORKFLOW.md"
+echo "  6. Run the daemon — add --port to enable the operator console:"
+echo "       node dist/src/cli.js --workflow /path/to/your/WORKFLOW.md --port 8787"
+echo "     Then visit http://127.0.0.1:8787/ for the live dashboard."
+echo
+echo "  Data dir for logs and raw turn captures defaults to:"
+echo "       ~/.symphony/<sha256(workflow_path)[:12]>/"
+echo "  Override with top-level data_dir: in WORKFLOW.md front matter."

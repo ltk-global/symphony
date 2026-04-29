@@ -652,7 +652,102 @@ each time a sink is opened, allowing operators to find the right file via
 
 Rotation/retention is operator-controlled.
 
-### 13.5 Operator Console HTTP Server (IMPLEMENTED — extension)
+### 13.5 Event Hooks (NEW — extension)
+
+The fork supports operator-defined alerting hooks that fire on event-log
+emissions. Hooks are observability-only (failures NEVER block the daemon).
+
+Front-matter shape:
+
+```yaml
+hooks:
+  on_event:
+    - name: paging-on-blocked
+      types: [iris_blocked_handed_off, dispatch_failed]
+      script: |
+        curl -fsS -XPOST "$SLACK_WEBHOOK" \
+          -d "{\"text\":\"$SYMPHONY_ISSUE_IDENTIFIER · $SYMPHONY_EVENT_TYPE\"}"
+      timeout_ms: 5000
+
+    - name: archive-everything
+      types: ["*"]
+      script: echo "$SYMPHONY_EVENT_PAYLOAD" >> /var/log/symphony/all.jsonl
+```
+
+Each rule:
+
+- `name` (optional) — identifier used in failure logs.
+- `types` (required, non-empty) — list of event-log type names; `"*"`
+  matches all.
+- `script` (required) — runs via `bash -lc`.
+- `timeout_ms` (default 10000) — kills the script with SIGKILL if it
+  hasn't exited.
+
+Environment variables provided to the script:
+
+- `SYMPHONY_EVENT_TYPE` — e.g. `iris_blocked_handed_off`
+- `SYMPHONY_EVENT_TS` — ISO 8601 timestamp
+- `SYMPHONY_ISSUE_ID` — present if the event names an issue
+- `SYMPHONY_ISSUE_IDENTIFIER` — present if the event names an issue
+- `SYMPHONY_SESSION_ID` — present for session-scoped events
+- `SYMPHONY_TURN_SEQ` — present when the event references a turn
+- `SYMPHONY_EVENT_PAYLOAD` — full payload, JSON-encoded (or `{}`)
+
+Failure semantics:
+
+- Hooks run fire-and-forget. The daemon does NOT await them.
+- A hook that exits non-zero, errors during spawn, or hits the timeout is
+  logged at warn level (`event hook exited non-zero` / `event hook timed
+  out — killing`) and otherwise ignored.
+- Hooks observe events that have already been written to `events.jsonl`,
+  so a hook crash never loses a trace entry.
+
+### 13.6 Cross-Daemon Aggregator (NEW — extension)
+
+For Pattern B deployments where multiple daemons run on one host (or one
+network), the fork ships a `symphony-aggregator` bin that polls each
+daemon's `GET /api/v1/state` and serves a unified dashboard.
+
+```bash
+symphony-aggregator --config /etc/symphony/aggregator.yaml
+```
+
+Aggregator config shape:
+
+```yaml
+port: 9000                         # default 9000
+host: 127.0.0.1                    # default loopback
+poll_interval_ms: 5000             # default 5000
+poll_timeout_ms: 3000               # default 3000 — per daemon
+recent_events_limit: 50             # default 50
+refresh_interval_sec: 5             # default 5 — HTML auto-refresh
+daemons:
+  - name: projA
+    url: http://127.0.0.1:8787
+  - name: projB
+    url: http://127.0.0.1:8788
+```
+
+Endpoints:
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/` | Unified dashboard. Daemon health row, sessions table tagged with daemon name (rows link out to that daemon's per-issue page in a new tab), retry queue, ts-merged recent events feed. |
+| GET | `/api/v1/state` | `{ generatedAt, counts, tokens, daemons[], recentEvents }` — `daemons[]` carries `reachable`, `lastSeenAt`, `lastFailureAt`, `lastError`, full per-daemon `state` snapshot. |
+| POST | `/api/v1/refresh` | 202; queues an immediate poll round. |
+
+Resilience:
+
+- Each daemon is polled independently; one daemon being down marks just
+  that daemon `reachable: false` with `lastError`. The aggregator keeps
+  serving the live data from healthy daemons.
+- The aggregator does NOT proxy to per-issue pages or raw turn captures —
+  those links open the originating daemon's console directly. This keeps
+  the aggregator stateless beyond polling cache.
+- Timeouts default to 3s; misconfigured daemons can't block the poll
+  cycle.
+
+### 13.7 Operator Console HTTP Server (IMPLEMENTED — extension)
 
 The fork implements the §13.7 HTTP extension from upstream. It is OPTIONAL
 and disabled by default; turn it on with either:
