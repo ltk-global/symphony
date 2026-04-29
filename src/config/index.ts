@@ -1,6 +1,7 @@
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
+import { defaultDataDir } from "../observability/data_dir.js";
 
 const rawSchema = z
   .object({
@@ -17,6 +18,7 @@ const rawSchema = z
   .passthrough();
 
 export interface ServiceConfig {
+  dataDir: string;
   tracker: {
     kind: "github_projects";
     endpoint: string;
@@ -87,7 +89,7 @@ export interface ServiceConfig {
 export function buildConfig(
   rawInput: unknown,
   env: NodeJS.ProcessEnv = process.env,
-  options: { baseDir?: string } = {},
+  options: { baseDir?: string; workflowPath?: string } = {},
 ): ServiceConfig {
   const raw = rawSchema.parse(rawInput);
   const tracker = raw.tracker ?? {};
@@ -109,7 +111,11 @@ export function buildConfig(
   const agentKind = agentKindValue(agent.kind);
   const baseDir = options.baseDir ?? process.cwd();
 
+  const dataDirRaw = (raw as Record<string, unknown>).data_dir;
+  const dataDir = pathValue(dataDirRaw, defaultDataDir(options.workflowPath ?? ""), env, baseDir);
+
   return {
+    dataDir,
     tracker: {
       kind: "github_projects",
       endpoint: stringValue(tracker.endpoint, "https://api.github.com/graphql"),

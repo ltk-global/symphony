@@ -9,6 +9,8 @@ import { CodexAdapter } from "./agent/codex.js";
 import { Orchestrator } from "./orchestrator/index.js";
 import { IrisClient } from "./iris/client.js";
 import { VerifyStage } from "./verify/stage.js";
+import { FileEventLog, type EventLog } from "./observability/event_log.js";
+import { eventLogPath } from "./observability/data_dir.js";
 import { log } from "./log.js";
 
 export interface RuntimeComponents {
@@ -16,6 +18,7 @@ export interface RuntimeComponents {
   orchestrator: Orchestrator;
   tracker: GitHubProjectsTracker;
   workspace: WorkspaceManager;
+  eventLog: EventLog;
 }
 
 export class SymphonyRuntime {
@@ -64,8 +67,18 @@ export class SymphonyRuntime {
 export async function buildRuntimeComponents(workflowPath: string, env: NodeJS.ProcessEnv = process.env): Promise<RuntimeComponents> {
   const absoluteWorkflowPath = resolve(workflowPath);
   const workflow = await loadWorkflow(absoluteWorkflowPath);
-  const config = buildConfig(workflow.config, env, { baseDir: dirname(absoluteWorkflowPath) });
+  const config = buildConfig(workflow.config, env, { baseDir: dirname(absoluteWorkflowPath), workflowPath: absoluteWorkflowPath });
   configureIrisEnvironment(config, env);
+  const eventLog: EventLog = new FileEventLog(eventLogPath(config.dataDir));
+  await eventLog.emit({
+    type: "daemon_reload",
+    payload: {
+      workflowPath: absoluteWorkflowPath,
+      dataDir: config.dataDir,
+      agentKind: config.agent.kind,
+      irisEnabled: config.iris.enabled,
+    },
+  });
   const tracker = new GitHubProjectsTracker({
     endpoint: config.tracker.endpoint,
     apiToken: config.tracker.apiToken,
@@ -96,7 +109,7 @@ export async function buildRuntimeComponents(workflowPath: string, env: NodeJS.P
         sharedSemaphoreKey: env.SYMPHONY_IRIS_SHARED_SEMAPHORE_KEY,
       })
     : null;
-  const verifyStage = iris ? new VerifyStage({ tracker, iris }) : undefined;
+  const verifyStage = iris ? new VerifyStage({ tracker, iris, eventLog }) : undefined;
   const orchestrator = new Orchestrator({
     tracker,
     workspace,
@@ -104,9 +117,10 @@ export async function buildRuntimeComponents(workflowPath: string, env: NodeJS.P
     verifyStage,
     iris: iris ?? undefined,
     config,
+    eventLog,
     renderPrompt: ({ issue, attempt, tools }) => renderPrompt(workflow.promptTemplate, { issue, attempt, tools }),
   });
-  return { config, orchestrator, tracker, workspace };
+  return { config, orchestrator, tracker, workspace, eventLog };
 }
 
 export async function cleanupTerminalWorkspaces(

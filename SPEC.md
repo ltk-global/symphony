@@ -574,6 +574,64 @@ Same as upstream §12. Template inputs: `issue`, `attempt`, plus this fork's `to
 
 Required context fields for issue-related logs: `issue_id`, `issue_identifier`. For session lifecycle: `session_id`, `agent_kind`. For IRIS calls: `iris_call_id`, `iris_container_id`, `iris_path` (`A` or `B`).
 
+### 13.1 Data Directory (NEW)
+
+Each daemon owns a per-workflow data directory used for durable observability.
+
+- Default: `~/.symphony/<sha256(absolute_workflow_path)[0:12]>/`. Different
+  workflows on the same host get distinct dirs without configuration.
+- Override: `data_dir:` top-level key in `WORKFLOW.md` front matter. Accepts
+  `~`, absolute paths, and `$VAR` references resolved against the process env.
+- The orchestrator creates this directory lazily on first write. Operators
+  MAY pre-create it to control mode/ownership.
+
+### 13.2 Event Log (NEW)
+
+The runtime writes an append-only structured event log to
+`<data_dir>/events.jsonl`. Each line is a single JSON object with the shape:
+
+```json
+{
+  "ts": "2026-04-29T17:21:53.748Z",
+  "type": "turn_completed",
+  "issueId": "PVI_1",
+  "issueIdentifier": "ltk-global/symphony#42",
+  "sessionId": "thread-1-turn-1",
+  "payload": { "...": "..." }
+}
+```
+
+Required event types (orchestrator-side):
+
+- `daemon_reload` — config (re)load with workflow path and data dir
+- `issue_dispatched`, `dispatch_failed`, `dispatch_aborted`
+- `workspace_prepared`
+- `agent_session_started`, `turn_started`, `turn_completed`, `turn_failed`,
+  `turn_cancelled`, `turn_input_required`
+- `agent_message`, `agent_tool_call`
+- `iris_call_started`, `iris_call_completed`, `iris_call_failed`,
+  `iris_blocked_handed_off`, `iris_call_limit_exceeded`
+- `verify_triggered`, `verify_result`, plus internal verify events emitted by
+  the verify stage (`verify_iris_call_started`, `verify_iris_call_completed`,
+  `verify_passed`, `verify_retry`, `verify_terminal_failed`,
+  `verify_blocked`, `verify_no_url`)
+- `retry_scheduled`, `retry_fired`, `retry_abandoned`
+- `session_released`, `session_stalled_cancelled`, `status_drift_detected`,
+  `status_transition_orchestrator`
+
+Implementations MAY add additional event types. Consumers MUST tolerate
+unknown types and unknown payload keys for forward compatibility.
+
+Write semantics:
+
+- Writes are serialized per process (no interleaved partial lines).
+- `appendFile` errors do NOT crash the daemon; they are logged via the
+  structured logger.
+- Rotation/retention is operator-controlled (logrotate, etc.). The daemon
+  does not rotate the file itself.
+
+### 13.3 Snapshot Interface
+
 Snapshot interface adds:
 
 - `iris`: `{ active: int, queued: int, max_concurrent: int, blocked_count: int }`

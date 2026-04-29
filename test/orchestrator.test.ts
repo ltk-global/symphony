@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Orchestrator } from "../src/orchestrator/index.js";
+import { MemoryEventLog } from "../src/observability/event_log.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -132,6 +133,36 @@ it("accumulates token totals from completed turns in the runtime snapshot", asyn
   await vi.waitFor(() => expect(orch.snapshot().codexTotals.totalTokens).toBe(15));
 
   expect(orch.snapshot().codexTotals).toMatchObject({ inputTokens: 10, outputTokens: 5, totalTokens: 15 });
+});
+
+it("emits a structured event trail through dispatch -> turn_completed for each issue", async () => {
+  async function* events() {
+    yield { kind: "message", text: "hello", final: true } as const;
+    yield { kind: "turn_completed", usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10 } } as const;
+  }
+  const eventLog = new MemoryEventLog();
+  const orch = new Orchestrator({
+    tracker: candidateTracker([{ id: "1", identifier: "a#1", state: "Todo", priority: 1, blockedBy: [] }]),
+    workspace: { prepare: vi.fn(async () => ({ path: "/tmp/ws", key: "a_1" })) } as any,
+    runner: { start: vi.fn(async () => ({ sessionId: "s1", events: events(), startTurn: vi.fn(), cancel: vi.fn() })) } as any,
+    renderPrompt: async () => "prompt",
+    config: baseConfig(),
+    eventLog,
+  });
+
+  await orch.tick();
+  await vi.waitFor(() => expect(eventLog.snapshot().some((event) => event.type === "turn_completed")).toBe(true));
+
+  const types = eventLog.snapshot().map((event) => event.type);
+  expect(types).toContain("issue_dispatched");
+  expect(types).toContain("workspace_prepared");
+  expect(types).toContain("agent_session_started");
+  expect(types).toContain("agent_message");
+  expect(types).toContain("turn_completed");
+  for (const event of eventLog.snapshot()) {
+    expect(event.issueIdentifier).toBe("a#1");
+    expect(event.issueId).toBe("1");
+  }
 });
 
 it("queues a short continuation retry after a clean completed turn", async () => {

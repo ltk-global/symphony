@@ -5,6 +5,7 @@ import type { ServiceConfig } from "../config/index.js";
 import type { Issue, NormalizedEvent, ToolResult, ToolSpec } from "../types.js";
 import type { VerifyRunResult, VerifyStage } from "../verify/stage.js";
 import type { WorkspaceManager } from "../workspace/manager.js";
+import type { EventLog } from "../observability/event_log.js";
 
 const BLOCKED_MARKER_RELATIVE_PATH = join(".symphony", "iris-blocked.json");
 
@@ -25,6 +26,7 @@ export interface OrchestratorOptions {
   };
   renderPrompt(input: { issue: Issue; attempt: number | null; tools: { iris_run: boolean; github: boolean } }): Promise<string>;
   config: ServiceConfig;
+  eventLog?: EventLog;
 }
 
 interface LiveSession {
@@ -53,6 +55,17 @@ export class Orchestrator {
   private readonly codexTotals = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 
   constructor(private readonly options: OrchestratorOptions) {}
+
+  private async emitEvent(input: { type: string; issue?: Pick<Issue, "id" | "identifier">; sessionId?: string; payload?: Record<string, unknown> }): Promise<void> {
+    if (!this.options.eventLog) return;
+    await this.options.eventLog.emit({
+      type: input.type,
+      issueId: input.issue?.id,
+      issueIdentifier: input.issue?.identifier,
+      sessionId: input.sessionId,
+      payload: input.payload,
+    });
+  }
 
   snapshot(): {
     running: number;
@@ -92,8 +105,14 @@ export class Orchestrator {
     this.clearRetry(issue.id);
     const now = Date.now();
     this.live.set(issue.id, { issue, abort, state: issue.state, attempt, startedAtMs: now, lastEventAtMs: now });
+    await this.emitEvent({
+      type: "issue_dispatched",
+      issue,
+      payload: { state: issue.state, attempt, priority: issue.priority, labels: issue.labels, repoFullName: issue.repoFullName },
+    });
     try {
       const workspace = await this.options.workspace.prepare({ issue, attempt });
+      await this.emitEvent({ type: "workspace_prepared", issue, payload: { path: workspace.path, key: workspace.key } });
       const toolAvailability = this.toolAvailability();
       const tools = this.buildToolSpecs();
       const prompt = await this.options.renderPrompt({
@@ -105,6 +124,7 @@ export class Orchestrator {
       const session = await this.options.runner.start({ workspacePath: workspace.path, prompt, issue, attempt, tools, abortSignal: abort.signal });
       if (!session) {
         this.live.delete(issue.id);
+        await this.emitEvent({ type: "dispatch_aborted", issue, payload: { reason: "runner_returned_null" } });
         return;
       }
       const live = this.live.get(issue.id);
@@ -112,12 +132,17 @@ export class Orchestrator {
         live.session = session;
         live.workspace = workspace;
       }
+      await this.emitEvent({ type: "agent_session_started", issue, sessionId: session.sessionId, payload: { attempt } });
       void this.consumeSession(issue, session, workspace).catch((error) => {
         this.live.delete(issue.id);
-        this.scheduleRetry(issue, nextFailureAttempt(attempt), error instanceof Error ? error.message : String(error));
+        const message = error instanceof Error ? error.message : String(error);
+        void this.emitEvent({ type: "session_consumer_error", issue, sessionId: session.sessionId, payload: { error: message } });
+        this.scheduleRetry(issue, nextFailureAttempt(attempt), message);
       });
     } catch (error) {
       this.live.delete(issue.id);
+      const message = error instanceof Error ? error.message : String(error);
+      await this.emitEvent({ type: "dispatch_failed", issue, payload: { error: message, attempt } });
       throw error;
     }
   }
@@ -130,13 +155,26 @@ export class Orchestrator {
       for await (const event of session.events) {
         const live = this.live.get(issue.id);
         if (live) live.lastEventAtMs = Date.now();
-        if (event.kind === "message" && event.final) finalMessages.push(event.text);
+        if (event.kind === "turn_started") {
+          await this.emitEvent({ type: "turn_started", issue, sessionId: session.sessionId, payload: { turnId: event.turnId } });
+        }
+        if (event.kind === "message" && event.final) {
+          finalMessages.push(event.text);
+          await this.emitEvent({ type: "agent_message", issue, sessionId: session.sessionId, payload: { text: truncate(event.text, 8000) } });
+        }
         if (event.kind === "usage") this.addUsage(event);
         if (event.kind === "tool_call") {
+          await this.emitEvent({
+            type: "agent_tool_call",
+            issue,
+            sessionId: session.sessionId,
+            payload: { toolName: event.toolName, callId: event.callId, args: redactToolArgs(event.toolName, event.args) },
+          });
           if (event.toolName === "iris_run") {
             irisCallsInTurn += 1;
             const maxCalls = this.options.config.agent.tools?.irisRun?.maxCallsPerTurn ?? 10;
             if (irisCallsInTurn > maxCalls) {
+              await this.emitEvent({ type: "iris_call_limit_exceeded", issue, sessionId: session.sessionId, payload: { callId: event.callId, maxCalls } });
               await session.startTurn({
                 text: "",
                 toolResults: [{ callId: event.callId, result: { error: "iris_run_call_limit_exceeded" } }],
@@ -152,6 +190,7 @@ export class Orchestrator {
         if (event.kind === "tool_result") {
           const blockedResult = extractBlockedIrisResult(event.result);
           if (blockedResult && this.options.config.iris.onBlocked === "needs_human") {
+            await this.emitEvent({ type: "iris_blocked_handed_off", issue, sessionId: session.sessionId, payload: { source: "tool_result", blocked: blockedResult.blocked ?? null } });
             await this.handleBlockedIrisResult(issue, blockedResult);
             await session.cancel("iris_blocked_handed_off");
             break;
@@ -159,9 +198,13 @@ export class Orchestrator {
         }
         if (event.kind === "turn_completed") {
           if (event.usage) this.addUsage(event.usage);
+          await this.emitEvent({ type: "turn_completed", issue, sessionId: session.sessionId, payload: { usage: event.usage ?? null } });
           const observedState = await this.refreshLiveStateAfterTurn(issue, session);
           if (observedState === "released") break;
           const verifyResult = await this.maybeVerify(issue, { finalMessages }, observedState ?? undefined);
+          if (verifyResult) {
+            await this.emitEvent({ type: "verify_result", issue, sessionId: session.sessionId, payload: { kind: verifyResult.kind } });
+          }
           if (verifyResult?.kind === "retry") {
             finalMessages.length = 0;
             irisCallsInTurn = 0;
@@ -173,6 +216,12 @@ export class Orchestrator {
           break;
         }
         if (event.kind === "turn_failed" || event.kind === "turn_cancelled" || event.kind === "turn_input_required") {
+          await this.emitEvent({
+            type: event.kind,
+            issue,
+            sessionId: session.sessionId,
+            payload: event.kind === "turn_failed" || event.kind === "turn_cancelled" ? { reason: event.reason } : { prompt: event.prompt },
+          });
           retry = { attempt: nextFailureAttempt(this.live.get(issue.id)?.attempt ?? null), error: event.kind };
           break;
         }
@@ -225,17 +274,49 @@ export class Orchestrator {
       return { callId: event.callId, result: { error: "iris_unavailable" } };
     }
     const profile = this.resolveIrisProfile(issue, args.profile);
-    const result = await this.options.iris.run({
-      instruction: args.instruction,
-      profile,
-      containerId: args.container_id,
-      abortSignal: this.live.get(issue.id)?.abort.signal,
+    const startedAt = Date.now();
+    await this.emitEvent({
+      type: "iris_call_started",
+      issue,
+      sessionId: session.sessionId,
+      payload: { callId: event.callId, profile, containerId: args.container_id ?? null, instruction: truncate(args.instruction, 4000) },
     });
+    let result: unknown;
+    try {
+      result = await this.options.iris.run({
+        instruction: args.instruction,
+        profile,
+        containerId: args.container_id,
+        abortSignal: this.live.get(issue.id)?.abort.signal,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.emitEvent({
+        type: "iris_call_failed",
+        issue,
+        sessionId: session.sessionId,
+        payload: { callId: event.callId, durationMs: Date.now() - startedAt, error: message },
+      });
+      throw error;
+    }
+    const durationMs = Date.now() - startedAt;
     if (isBlockedIrisResult(result) && this.options.config.iris.onBlocked === "needs_human") {
+      await this.emitEvent({
+        type: "iris_blocked_handed_off",
+        issue,
+        sessionId: session.sessionId,
+        payload: { source: "tool_call", callId: event.callId, durationMs, blocked: result.blocked ?? null },
+      });
       await this.handleBlockedIrisResult(issue, result);
       await session.cancel("iris_blocked_handed_off");
       return null;
     }
+    await this.emitEvent({
+      type: "iris_call_completed",
+      issue,
+      sessionId: session.sessionId,
+      payload: { callId: event.callId, durationMs, status: irisStatus(result) },
+    });
     return { callId: event.callId, result };
   }
 
@@ -247,6 +328,11 @@ export class Orchestrator {
     const comment = renderBlockedComment(this.options.config.iris.blockedCommentTemplate, blocked);
     await this.options.tracker.commentOnIssue?.(issue, comment);
     await this.options.tracker.transitionIssue?.(issue, this.options.config.tracker.needsHumanState);
+    await this.emitEvent({
+      type: "status_transition_orchestrator",
+      issue,
+      payload: { to: this.options.config.tracker.needsHumanState, reason: "iris_blocked" },
+    });
   }
 
   private async maybeVerify(issue: Issue, lastTurn: { finalMessages: string[] }, observedState?: string): Promise<VerifyRunResult | null> {
@@ -262,6 +348,11 @@ export class Orchestrator {
     } else if (verify.trigger && verify.trigger !== "always") {
       return null;
     }
+    await this.emitEvent({
+      type: "verify_triggered",
+      issue,
+      payload: { trigger: verify.trigger ?? "always", observedState: observedState ?? null },
+    });
 
     return this.options.verifyStage.run({
       issue,
@@ -373,6 +464,12 @@ export class Orchestrator {
     const now = Date.now();
     for (const live of this.live.values()) {
       if (now - live.lastEventAtMs <= stallTimeoutMs) continue;
+      void this.emitEvent({
+        type: "session_stalled_cancelled",
+        issue: live.issue,
+        sessionId: live.session?.sessionId,
+        payload: { stallTimeoutMs, lastEventAgeMs: now - live.lastEventAtMs },
+      });
       void live.session?.cancel("stalled");
       live.abort.abort();
       this.live.delete(live.issue.id);
@@ -397,6 +494,12 @@ export class Orchestrator {
     const terminal = new Set(this.options.config.tracker.terminalStates.map((item) => item.toLowerCase()));
     const active = new Set((this.options.config.tracker.activeStates ?? []).map((item: string) => item.toLowerCase()));
     if (terminal.has(normalized)) {
+      await this.emitEvent({
+        type: "session_released",
+        issue: live.issue,
+        sessionId: live.session?.sessionId,
+        payload: { reason: "terminal_state", from: live.state, to: state },
+      });
       await live.session?.cancel(`terminal_state:${state}`);
       live.abort.abort();
       this.live.delete(live.issue.id);
@@ -404,11 +507,25 @@ export class Orchestrator {
       return "released";
     }
     if (active.size > 0 && !active.has(normalized)) {
+      await this.emitEvent({
+        type: "session_released",
+        issue: live.issue,
+        sessionId: live.session?.sessionId,
+        payload: { reason: "inactive_state", from: live.state, to: state },
+      });
       await live.session?.cancel(`inactive_state:${state}`);
       live.abort.abort();
       this.live.delete(live.issue.id);
       this.clearRetry(live.issue.id);
       return "released";
+    }
+    if (live.state.toLowerCase() !== normalized) {
+      void this.emitEvent({
+        type: "status_drift_detected",
+        issue: live.issue,
+        sessionId: live.session?.sessionId,
+        payload: { from: live.state, to: state },
+      });
     }
     return "running";
   }
@@ -422,6 +539,11 @@ export class Orchestrator {
     }, delay);
     timer.unref?.();
     this.retryAttempts.set(issue.id, { issue, attempt, dueAtMs, error, timer });
+    void this.emitEvent({
+      type: "retry_scheduled",
+      issue,
+      payload: { attempt, dueAtMs, delayMs: delay, error },
+    });
   }
 
   private clearRetry(issueId: string): void {
@@ -433,10 +555,12 @@ export class Orchestrator {
   private async runRetry(issueId: string): Promise<void> {
     const retry = this.retryAttempts.get(issueId);
     if (!retry) return;
+    await this.emitEvent({ type: "retry_fired", issue: retry.issue, payload: { attempt: retry.attempt } });
     const candidates = await this.options.tracker.fetchCandidateIssues();
     const issue = candidates.find((candidate) => candidate.id === issueId);
     if (!issue) {
       this.clearRetry(issueId);
+      await this.emitEvent({ type: "retry_abandoned", issue: retry.issue, payload: { reason: "no_longer_candidate" } });
       return;
     }
     if (isBlockedForDispatch(issue, this.options.config.tracker.terminalStates) || !this.hasCapacity(issue.state)) {
@@ -524,6 +648,28 @@ function renderBlockedComment(template: string, blocked: { reason: string; vnc_u
     .replaceAll("{{ blocked.vnc_url }}", blocked.vnc_url)
     .replaceAll("{{blocked.reason}}", blocked.reason)
     .replaceAll("{{blocked.vnc_url}}", blocked.vnc_url);
+}
+
+function truncate(value: string, max: number): string {
+  if (typeof value !== "string") return "";
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}…[truncated ${value.length - max} chars]`;
+}
+
+function redactToolArgs(toolName: string, args: unknown): unknown {
+  if (toolName !== "iris_run") return args;
+  if (!args || typeof args !== "object") return args;
+  const record = args as Record<string, unknown>;
+  return {
+    ...record,
+    instruction: typeof record.instruction === "string" ? truncate(record.instruction, 4000) : record.instruction,
+  };
+}
+
+function irisStatus(result: unknown): string {
+  if (!result || typeof result !== "object") return "unknown";
+  const status = (result as Record<string, unknown>).status;
+  return typeof status === "string" ? status : "unknown";
 }
 
 function normalizeVerifyConfig(verify: any) {
