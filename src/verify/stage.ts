@@ -65,11 +65,32 @@ export class VerifyStage {
     const emit = (type: string, payload?: Record<string, unknown>) =>
       this.deps.eventLog?.emit({ type, issueId: input.issue.id, issueIdentifier: input.issue.identifier, payload });
 
+    // Comments and transitions are best-effort SIDE EFFECTS of a verify outcome.
+    // If they throw (e.g. transition target state doesn't exist on the project),
+    // we log + emit a structured event but DO NOT bubble — otherwise the outer
+    // dispatch loop treats verify-pass + transition-fail as a session failure
+    // and re-runs IRIS, which is expensive and wrong.
+    const safeComment = async (body: string, stage: string) => {
+      try { await this.deps.tracker.commentOnIssue(input.issue, body); }
+      catch (error) {
+        await emit("verify_comment_failed", { stage, error: error instanceof Error ? error.message : String(error) });
+      }
+    };
+    const safeTransition = async (target: string, stage: string) => {
+      try { await this.deps.tracker.transitionIssue(input.issue, target); }
+      catch (error) {
+        await emit("verify_transition_failed", { stage, target, error: error instanceof Error ? error.message : String(error) });
+      }
+    };
+
     const resolved = resolveVerifyUrl(input.issue, input.lastTurn, input.config);
     if (!resolved) {
       await emit("verify_no_url", { attemptedSources: normalizeSources(input.config.urlSource) });
-      await this.deps.tracker.commentOnIssue(input.issue, await render(input.config.onNoUrl.commentTemplate, { issue: input.issue, verify: { attempted_sources: normalizeSources(input.config.urlSource) } }));
-      await this.deps.tracker.transitionIssue(input.issue, input.config.onNoUrl.transitionTo);
+      await safeComment(
+        await render(input.config.onNoUrl.commentTemplate, { issue: input.issue, verify: { attempted_sources: normalizeSources(input.config.urlSource) } }),
+        "on_no_url",
+      );
+      await safeTransition(input.config.onNoUrl.transitionTo, "on_no_url");
       return { kind: "no_url" };
     }
 
@@ -92,16 +113,19 @@ export class VerifyStage {
           vnc_url: irisResult.blocked?.vncUrl ?? "",
         },
       });
-      await this.deps.tracker.commentOnIssue(input.issue, body);
-      await this.deps.tracker.transitionIssue(input.issue, input.irisConfig.needsHumanState ?? "Needs Human");
+      await safeComment(body, "on_blocked");
+      await safeTransition(input.irisConfig.needsHumanState ?? "Needs Human", "on_blocked");
       return { kind: "blocked" };
     }
 
     const parsed = parseVerifyResult(irisResult.result);
     if (parsed.pass) {
       await emit("verify_passed", { transitionTo: input.config.onPass.transitionTo, summary: parsed.summary, evidenceUrl: parsed.evidenceUrl ?? null });
-      await this.deps.tracker.commentOnIssue(input.issue, await render(input.config.onPass.commentTemplate, { issue: input.issue, result: parsed }));
-      await this.deps.tracker.transitionIssue(input.issue, input.config.onPass.transitionTo);
+      await safeComment(
+        await render(input.config.onPass.commentTemplate, { issue: input.issue, result: parsed }),
+        "on_pass",
+      );
+      await safeTransition(input.config.onPass.transitionTo, "on_pass");
       this.attempts.delete(input.issue.id);
       return { kind: "passed" };
     }
@@ -117,8 +141,11 @@ export class VerifyStage {
     }
 
     await emit("verify_terminal_failed", { attempts: nextAttempts, transitionTo: input.config.onFail.finalTransitionTo, summary: parsed.summary });
-    await this.deps.tracker.commentOnIssue(input.issue, await render(input.config.onFail.finalCommentTemplate, { issue: input.issue, result: parsed, verify: { attempts: nextAttempts } }));
-    await this.deps.tracker.transitionIssue(input.issue, input.config.onFail.finalTransitionTo);
+    await safeComment(
+      await render(input.config.onFail.finalCommentTemplate, { issue: input.issue, result: parsed, verify: { attempts: nextAttempts } }),
+      "on_fail_terminal",
+    );
+    await safeTransition(input.config.onFail.finalTransitionTo, "on_fail_terminal");
     this.attempts.delete(input.issue.id);
     return { kind: "terminal_failed" };
   }
