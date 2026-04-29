@@ -170,6 +170,11 @@ async function main() {
   }
   info(`Available Status values: ${statusOptions.map((o) => `'${o.name}'`).join(", ")}`);
 
+  const hasNeedsHuman = statusOptions.some((o) => /needs human|blocked/i.test(o.name));
+  if (!hasNeedsHuman) {
+    statusOptions = await maybeAddNeedsHumanOption(token, project.id, statusOptions, "Needs Human");
+  }
+
   const defaultActive = statusOptions.filter((o) => /todo|in progress|review feedback/i.test(o.name)).map((o) => o.name);
   const defaultTerminal = statusOptions.filter((o) => /done|cancelled|won't do/i.test(o.name)).map((o) => o.name);
   const needsHumanGuess = statusOptions.find((o) => /needs human|blocked/i.test(o.name))?.name ?? statusOptions[0].name;
@@ -286,36 +291,63 @@ async function main() {
 // ── helpers ──────────────────────────────────────────────
 
 async function pickProject(token, viewerLogin) {
-  const resp = await graphql(token, `
-    query {
-      viewer {
-        projectsV2(first: 50) {
-          nodes { id, number, title, url, owner {
-            __typename
-            ... on User { login }
-            ... on Organization { login }
-          } }
+  while (true) {
+    const resp = await graphql(token, `
+      query {
+        viewer {
+          id
+          projectsV2(first: 50) {
+            nodes { id, number, title, url, owner {
+              __typename
+              ... on User { login }
+              ... on Organization { login }
+            } }
+          }
         }
       }
-    }
-  `);
-  const projects = resp.viewer?.projectsV2?.nodes ?? [];
-  while (true) {
+    `);
+    const projects = resp.viewer?.projectsV2?.nodes ?? [];
+    const viewerId = resp.viewer?.id;
+
     if (projects.length === 0) {
       warn(`No Projects (v2) found for ${viewerLogin}.`);
-      const url = (await ask("Paste a project URL (or blank to abort)")).trim();
-      if (!url) return null;
-      return resolveProjectByUrl(token, url);
+      info("Options:");
+      info(`  ${C.bold}[c]${C.reset} create a new Project under ${viewerLogin}`);
+      info(`  ${C.bold}[u]${C.reset} paste a project URL (e.g. an org-owned project)`);
+      info(`  ${C.bold}[q]${C.reset} quit`);
+      const choice = (await ask("Pick", { default: "c" })).trim().toLowerCase();
+      if (choice === "q") return null;
+      if (choice === "u") {
+        const url = (await ask("Project URL")).trim();
+        const project = await resolveProjectByUrl(token, url);
+        if (project) return project;
+        warn("Could not resolve that URL — try again.");
+        continue;
+      }
+      if (choice === "c" || choice === "") {
+        const created = await createProject(token, viewerId, viewerLogin);
+        if (created) return created;
+        continue;
+      }
+      warn("That wasn't an option.");
+      continue;
     }
+
     out("");
     projects.forEach((p, i) => {
       const owner = p.owner?.login ?? "?";
       info(`  ${C.bold}[${i + 1}]${C.reset} ${owner}/${p.number}  ${p.title}`);
     });
+    info(`  ${C.bold}[c]${C.reset} create a new Project under ${viewerLogin}`);
     info(`  ${C.bold}[u]${C.reset} paste a project URL`);
     info(`  ${C.bold}[q]${C.reset} quit`);
-    const choice = (await ask("Pick", { default: "1" })).trim();
+    const choice = (await ask("Pick", { default: "1" })).trim().toLowerCase();
     if (choice === "q") return null;
+    if (choice === "c") {
+      const created = await createProject(token, viewerId, viewerLogin);
+      if (created) return created;
+      continue;
+    }
     if (choice === "u") {
       const url = (await ask("Project URL")).trim();
       const project = await resolveProjectByUrl(token, url);
@@ -326,6 +358,89 @@ async function pickProject(token, viewerLogin) {
     const idx = parseInt(choice, 10) - 1;
     if (Number.isInteger(idx) && projects[idx]) return projects[idx];
     warn("That wasn't an option.");
+  }
+}
+
+async function createProject(token, ownerId, ownerLogin) {
+  if (!ownerId) {
+    warn("Couldn't resolve your user ID. Create a project in the GitHub UI and re-run.");
+    return null;
+  }
+  const title = (await ask("Project title", { default: "Symphony Bot Queue" })).trim();
+  if (!title) return null;
+  try {
+    const data = await graphql(token, `
+      mutation($ownerId: ID!, $title: String!) {
+        createProjectV2(input: { ownerId: $ownerId, title: $title }) {
+          projectV2 { id, number, title, url, owner {
+            __typename
+            ... on User { login }
+            ... on Organization { login }
+          } }
+        }
+      }
+    `, { ownerId, title });
+    const project = data.createProjectV2?.projectV2;
+    if (!project) throw new Error("no project in response");
+    ok(`created ${project.title} at ${project.url}`);
+    info(`Owner: ${project.owner?.login ?? ownerLogin} · Number: #${project.number}`);
+    return project;
+  } catch (error) {
+    fail(`couldn't create project: ${error instanceof Error ? error.message : error}`);
+    info("Likely cause: token missing 'project' scope, or the owner is an org you can't admin.");
+    return null;
+  }
+}
+
+async function maybeAddNeedsHumanOption(token, projectId, options, desiredName) {
+  const lc = desiredName.toLowerCase();
+  if (options.some((o) => o.name.toLowerCase() === lc)) return options;
+
+  warn(`'${desiredName}' is not a current Status option on this project.`);
+  info(`If you don't add it, IRIS-blocked items will not have a clear destination.`);
+  const confirm = await askYesNo(`Add '${desiredName}' to the Status field now?`, true);
+  if (!confirm) {
+    info("OK — add it manually in the GitHub UI under Project → Settings → Status field.");
+    return options;
+  }
+
+  try {
+    const fieldData = await graphql(token, `
+      query($id: ID!) {
+        node(id: $id) {
+          ... on ProjectV2 {
+            field(name: "Status") {
+              ... on ProjectV2SingleSelectField { id, options { id, name, color, description } }
+            }
+          }
+        }
+      }
+    `, { id: projectId });
+    const fieldId = fieldData.node?.field?.id;
+    const existing = fieldData.node?.field?.options ?? [];
+    if (!fieldId) throw new Error("Status field not found");
+
+    const merged = [
+      ...existing.map((o) => ({ name: o.name, color: o.color ?? "GRAY", description: o.description ?? "" })),
+      { name: desiredName, color: "ORANGE", description: "Symphony parks IRIS-blocked items here for human resolution." },
+    ];
+
+    const updated = await graphql(token, `
+      mutation($fieldId: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]!) {
+        updateProjectV2Field(input: { fieldId: $fieldId, singleSelectOptions: $options }) {
+          projectV2Field {
+            ... on ProjectV2SingleSelectField { options { id, name } }
+          }
+        }
+      }
+    `, { fieldId, options: merged });
+    const newOptions = updated.updateProjectV2Field?.projectV2Field?.options ?? [];
+    ok(`added '${desiredName}' — current options: ${newOptions.map((o) => o.name).join(", ")}`);
+    return newOptions;
+  } catch (error) {
+    fail(`couldn't update field: ${error instanceof Error ? error.message : error}`);
+    info("You can add the option manually in Project → Settings → Status field.");
+    return options;
   }
 }
 
