@@ -7,6 +7,7 @@
 
 import { existsSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
+import { authorWorkflow } from "./lib/workflow-author.mjs";
 import { resolve, dirname } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -293,6 +294,16 @@ async function main() {
   const defaultWorkspaceRoot = `~/symphony_workspaces/${slug(project.title)}`;
   const workspaceRoot = (await ask("Workspace root (where issue repos get cloned)", { default: defaultWorkspaceRoot })).trim();
 
+  // ── 9b. Customization brief (LLM-driven body) ──────────
+  head("Workflow style");
+  info("Symphony hands the LLM (claude --print) a structured config + your brief, gets back");
+  info("a tailored WORKFLOW.md. Keep blank for the default status-driven workflow.");
+  info("Examples:");
+  info(`  · ${C.dim}'Comment on the issue at start and PR-open instead of changing Status.'${C.reset}`);
+  info(`  · ${C.dim}'Use pnpm test and pnpm lint; deploy to Vercel preview before verify.'${C.reset}`);
+  info(`  · ${C.dim}'When IRIS blocks, also assign a human reviewer (gh issue edit --add-assignee).'${C.reset}`);
+  const brief = (await ask("Brief (blank = default status-driven)")).trim();
+
   // ── 10. Write WORKFLOW.md ─────────────────────────────
   head("Writing WORKFLOW.md");
   const workflowPath = resolve((await ask("Path for the workflow file", { default: "./WORKFLOW.md" })).trim());
@@ -300,8 +311,10 @@ async function main() {
     const overwrite = await askYesNo(`${workflowPath} exists. Overwrite?`, false);
     if (!overwrite) { warn("Aborted."); exit(0); }
   }
-  const workflowSource = renderWorkflow({
-    project,
+
+  const authorContext = {
+    project: { title: project.title, url: project.url, owner: project.owner ?? null },
+    statusOptions: statusOptions.map((o) => ({ id: o.id, name: o.name })),
     activeStates,
     terminalStates,
     needsHumanState,
@@ -309,12 +322,39 @@ async function main() {
     agentKind,
     enableIris,
     irisProfile,
+    verify,
+    verifyTransitions,
     enableConsole,
     port,
     workspaceRoot,
-    verify,
-    verifyTransitions,
-  });
+    slack: null,  // populated by Slack step in a follow-up commit
+  };
+
+  let workflowSource;
+  info("invoking claude with the symphony-workflow-author skill...");
+  const result = await authorWorkflow({ context: authorContext, description: brief });
+  if (result.source) {
+    ok(`workflow authored by claude (${result.attempts} attempt${result.attempts === 1 ? "" : "s"})`);
+    workflowSource = result.source;
+  } else {
+    warn(`falling back to canned template — ${result.reason}`);
+    info("To use the LLM-driven path, install claude: npm install -g @anthropic-ai/claude-code");
+    workflowSource = renderWorkflow({
+      project,
+      activeStates,
+      terminalStates,
+      needsHumanState,
+      assignee: assignee || null,
+      agentKind,
+      enableIris,
+      irisProfile,
+      enableConsole,
+      port,
+      workspaceRoot,
+      verify,
+      verifyTransitions,
+    });
+  }
   await writeFile(workflowPath, workflowSource, "utf8");
   ok(`wrote ${workflowPath}`);
 
