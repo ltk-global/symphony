@@ -256,6 +256,29 @@ async function main() {
     }
   }
 
+  // ── 7b. Verify transition targets (only when IRIS is on) ──
+  let verifyTransitions = null;
+  if (enableIris) {
+    head("Verify transition targets");
+    info("Symphony moves items to these Status values when verify completes. Each MUST exist on the Status field.");
+    info(`Available: ${statusOptions.map((o) => `'${o.name}'`).join(", ")}`);
+    const validateOption = (value) => {
+      const trimmed = value.trim();
+      if (!trimmed) return "required";
+      if (statusOptions.some((o) => o.name.toLowerCase() === trimmed.toLowerCase())) return null;
+      return `Not a Status option. Pick one of: ${statusOptions.map((o) => o.name).join(", ")}`;
+    };
+    const reviewGuess =
+      statusOptions.find((o) => /review/i.test(o.name))?.name ??
+      terminalStates[0] ??
+      needsHumanState;
+    const onPass = (await ask("On verify pass, transition to", { default: reviewGuess, validate: validateOption })).trim();
+    const onFailFinal = (await ask("On verify fail (after retries), transition to", { default: needsHumanState, validate: validateOption })).trim();
+    const onNoUrl = (await ask("On verify finding no URL, transition to", { default: needsHumanState, validate: validateOption })).trim();
+    verifyTransitions = { onPass, onFailFinal, onNoUrl };
+    ok(`pass→${onPass}  fail→${onFailFinal}  no-url→${onNoUrl}`);
+  }
+
   // ── 8. Operator console ───────────────────────────────
   head("Operator console");
   const enableConsole = await askYesNo("Enable the dashboard at 127.0.0.1:8787?", true);
@@ -290,6 +313,7 @@ async function main() {
     port,
     workspaceRoot,
     verify,
+    verifyTransitions,
   });
   await writeFile(workflowPath, workflowSource, "utf8");
   ok(`wrote ${workflowPath}`);
@@ -749,16 +773,17 @@ function renderWorkflow(opts) {
       lines.push("  url_source: agent_output");
       lines.push("  agent_output_key: verify_url");
     }
+    const t = opts.verifyTransitions ?? { onPass: "In Review", onFailFinal: "Needs Human", onNoUrl: "Needs Human" };
     lines.push("  on_pass:");
-    lines.push("    transition_to: 'In Review'");
+    lines.push(`    transition_to: ${yaml(t.onPass)}`);
     lines.push("    comment_template: 'Verified by IRIS. {{ result.summary }}'");
     lines.push("  on_fail:");
     lines.push("    max_attempts: 2");
     lines.push("    feedback_template: 'IRIS verification failed: {{ result.summary }}'");
-    lines.push("    final_transition_to: Needs Human");
+    lines.push(`    final_transition_to: ${yaml(t.onFailFinal)}`);
     lines.push("    final_comment_template: 'Verification failed {{ verify.attempts }} times.'");
     lines.push("  on_no_url:");
-    lines.push("    transition_to: Needs Human");
+    lines.push(`    transition_to: ${yaml(t.onNoUrl)}`);
     lines.push("    comment_template: 'Verify stage could not resolve a URL.'");
   }
   lines.push("");
