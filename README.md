@@ -47,6 +47,8 @@ Total time from clone to live dashboard: ~3 minutes.
   polls each daemon's `/api/v1/state` and serves a unified dashboard.
 - **Browser verify** via IRIS (Swarmy) — drive a real Chrome to confirm
   the agent's change is live before transitioning the item to "In Review".
+  The wizard handles IRIS token entry and offers to set up an
+  ngrok or cloudflared tunnel for verifying against your local dev server.
 
 ## How it works
 

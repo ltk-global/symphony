@@ -5,7 +5,7 @@
 // optionally start the daemon. Read by humans first, code second — keep
 // prompts short and unambiguous.
 
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
@@ -203,15 +203,57 @@ async function main() {
   if (assignee) ok(`only items assigned to ${assignee}`);
   else warn("no assignee filter — Symphony will pick up every item in active_states");
 
-  // ── 7. IRIS (default off) ─────────────────────────────
+  // ── 7. IRIS + verify URL strategy ──────────────────────
   head("Browser verify (IRIS)");
-  info("IRIS drives a real Chrome via Swarmy to verify changes end-to-end.");
-  info("Skip for now if you don't have an IRIS_TOKEN — you can enable later.");
+  info("IRIS drives a real Chrome via Swarmy so the agent's change can be verified live.");
+  info("Get a token at https://swarmy.firsttofly.com/settings → API Tokens (starts 'swm_').");
+  info("Profiles dashboard:  https://swarmy.firsttofly.com/profiles");
+
   const enableIris = await askYesNo("Enable IRIS now?", false);
   let irisProfile = "claude-default-latest";
+  let irisToken = process.env.IRIS_TOKEN ?? "";
+  let verify = { mode: "agent_output", url: "" };  // default: dynamic
+  let tunnelScript = null;
+
   if (enableIris) {
-    if (!process.env.IRIS_TOKEN) warn("IRIS_TOKEN env var is NOT set — daemon will fail to start until you export it.");
+    if (irisToken) {
+      ok(`IRIS_TOKEN already set (${irisToken.length} chars)`);
+    } else {
+      irisToken = await ask("IRIS token", { hidden: true, validate: (v) => {
+        if (v.length < 10) return "That looks too short for a Swarmy token.";
+        if (!v.startsWith("swm_")) return "Expected token to start with 'swm_' (Settings → API Tokens).";
+        return null;
+      } });
+      ok(`token captured (${irisToken.length} chars)`);
+    }
     irisProfile = (await ask("Default IRIS profile", { default: "claude-default-latest" })).trim();
+    info("Per-user concurrent quota is 3 containers; rate is per-task, not per-minute.");
+
+    head("Verify URL");
+    info("IRIS needs a real URL its Chrome can reach. Pick a strategy:");
+    info(`  ${C.bold}[d]${C.reset} dynamic — agent emits {"verify_url": "..."} JSON in its last message`);
+    info(`  ${C.bold}[s]${C.reset} static  — fixed URL (deployed app, GitHub Pages, etc.)`);
+    info(`  ${C.bold}[n]${C.reset} ngrok tunnel to localhost (uses your free *.ngrok-free.app static domain or a paid one)`);
+    info(`  ${C.bold}[c]${C.reset} cloudflared tunnel to localhost (quick / random URL, or named / fixed)`);
+    const strategy = (await ask("Strategy", { default: "d" })).trim().toLowerCase();
+
+    if (strategy === "s" || strategy === "static") {
+      const url = (await ask("Static URL (https://...)", { validate: (v) => /^https?:\/\/.+/.test(v) ? null : "Must be a full http(s) URL." })).trim();
+      verify = { mode: "static", url };
+    } else if (strategy === "n" || strategy === "ngrok") {
+      const result = await setupNgrok(workflowSlug(project));
+      if (result?.script) tunnelScript = result.script;
+      if (result?.url) verify = { mode: "static", url: result.url };
+      else verify = { mode: "agent_output", url: "" };  // random URL → defer to agent
+    } else if (strategy === "c" || strategy === "cloudflared") {
+      const result = await setupCloudflared(workflowSlug(project));
+      if (result?.script) tunnelScript = result.script;
+      if (result?.url) verify = { mode: "static", url: result.url };
+      else verify = { mode: "agent_output", url: "" };  // quick tunnel random URL
+    } else {
+      verify = { mode: "agent_output", url: "" };
+      ok("agent will emit verify_url in its final JSON line");
+    }
   }
 
   // ── 8. Operator console ───────────────────────────────
@@ -247,6 +289,7 @@ async function main() {
     enableConsole,
     port,
     workspaceRoot,
+    verify,
   });
   await writeFile(workflowPath, workflowSource, "utf8");
   ok(`wrote ${workflowPath}`);
@@ -256,7 +299,11 @@ async function main() {
   if (!process.env.GITHUB_TOKEN) {
     info("GITHUB_TOKEN was pasted in this session — exporting it for the preflight subprocess.");
   }
+  if (enableIris && !process.env.IRIS_TOKEN && irisToken) {
+    info("IRIS_TOKEN captured this session — exported for the preflight subprocess.");
+  }
   const preflightEnv = { ...process.env, GITHUB_TOKEN: token };
+  if (enableIris && irisToken) preflightEnv.IRIS_TOKEN = irisToken;
   const preflightExit = await runStreamed(
     "node",
     [resolve(repoRoot, "scripts", "preflight.mjs"), workflowPath],
@@ -270,9 +317,18 @@ async function main() {
   // ── 12. Wrap up ───────────────────────────────────────
   head("All set");
   ok("Configuration written and validated.");
-  if (!process.env.GITHUB_TOKEN) {
-    out(`\n  ${C.yellow}Before running the daemon, export your token:${C.reset}`);
-    out(`    ${C.bold}export GITHUB_TOKEN=${C.dim}<your token>${C.reset}`);
+
+  if (tunnelScript) {
+    out(`\n  ${C.bold}${C.yellow}Tunnel:${C.reset} run this in a separate terminal BEFORE starting the daemon`);
+    out(`    ${C.bold}bash ${tunnelScript.path}${C.reset}`);
+    if (tunnelScript.url) out(`    Public URL: ${C.cyan}${tunnelScript.url}${C.reset}`);
+    else out(`    Public URL: random — copy from the tunnel terminal once it prints`);
+  }
+
+  if (!process.env.GITHUB_TOKEN || (enableIris && !process.env.IRIS_TOKEN && irisToken)) {
+    out(`\n  ${C.yellow}Before running the daemon, export your tokens:${C.reset}`);
+    if (!process.env.GITHUB_TOKEN) out(`    ${C.bold}export GITHUB_TOKEN=${C.dim}<your github token>${C.reset}`);
+    if (enableIris && !process.env.IRIS_TOKEN && irisToken) out(`    ${C.bold}export IRIS_TOKEN=${C.dim}<your IRIS token>${C.reset}`);
   }
   out(`\n  ${C.bold}Run the daemon:${C.reset}`);
   out(`    node dist/src/cli.js --workflow ${C.dim}${workflowPath}${C.reset}${enableConsole ? ` --port ${port}` : ""}`);
@@ -280,7 +336,6 @@ async function main() {
 
   const startNow = await askYesNo("Start the daemon now?", true);
   if (!startNow) exit(0);
-  if (!process.env.GITHUB_TOKEN) preflightEnv.GITHUB_TOKEN = token;
   rl.close();
   const args = [resolve(repoRoot, "dist", "src", "cli.js"), "--workflow", workflowPath];
   if (enableConsole) args.push("--port", String(port));
@@ -390,6 +445,97 @@ async function createProject(token, ownerId, ownerLogin) {
     info("Likely cause: token missing 'project' scope, or the owner is an org you can't admin.");
     return null;
   }
+}
+
+async function setupNgrok(slug) {
+  if (!onPath("ngrok")) {
+    warn("ngrok not on PATH.");
+    info("Install: https://ngrok.com/download (or `brew install ngrok`).");
+    info("Then: `ngrok config add-authtoken <token>` once.");
+    return null;
+  }
+  ok("found ngrok on PATH");
+  const port = (await ask("Local port to tunnel", { default: "3000", validate: (v) => /^\d+$/.test(v) ? null : "Must be a port number." })).trim();
+  info("Free ngrok accounts get one fixed *.ngrok-free.app domain — claim at dashboard.ngrok.com.");
+  const domain = (await ask("Fixed domain (e.g. ken-luong.ngrok-free.app), or blank for random per-session URL")).trim();
+  const command = domain ? `ngrok http --domain=${domain} ${port}` : `ngrok http ${port}`;
+  const url = domain ? `https://${domain}` : null;
+  const script = generateTunnelScript({
+    slug,
+    kind: "ngrok",
+    port,
+    command,
+    url,
+    notes: domain
+      ? null
+      : "Random URL — copy the https://*.ngrok-free.app printed below into WORKFLOW.md or use 'agent_output' mode.",
+  });
+  if (url) ok(`tunnel URL will be ${url}`);
+  return { script, url };
+}
+
+async function setupCloudflared(slug) {
+  if (!onPath("cloudflared")) {
+    warn("cloudflared not on PATH.");
+    info("Install: `brew install cloudflared` (macOS), or see https://github.com/cloudflare/cloudflared.");
+    return null;
+  }
+  ok("found cloudflared on PATH");
+  info("Quick tunnels: random *.trycloudflare.com URL, no auth, no SSE on the tunneled app.");
+  info("Named tunnels:  stable URL with your own domain, requires `cloudflared tunnel login` once.");
+  const kind = (await ask("Tunnel type [q]uick or [n]amed", { default: "q" })).trim().toLowerCase();
+  const port = (await ask("Local port to tunnel", { default: "3000", validate: (v) => /^\d+$/.test(v) ? null : "Must be a port number." })).trim();
+
+  if (kind === "n" || kind === "named") {
+    const tunnelName = (await ask("Tunnel name (must already be created via `cloudflared tunnel create <name>`)", { default: "symphony-verify" })).trim();
+    const hostname = (await ask("Hostname routed to this tunnel (e.g. verify.example.com)", { validate: (v) => /^[A-Za-z0-9.-]+$/.test(v) ? null : "Looks malformed." })).trim();
+    if (!hostname) return null;
+    const command = `cloudflared tunnel run ${tunnelName}`;
+    const url = `https://${hostname}`;
+    const script = generateTunnelScript({ slug, kind: "cloudflared-named", port, command, url, notes: null });
+    ok(`tunnel URL will be ${url}`);
+    return { script, url };
+  }
+
+  const command = `cloudflared tunnel --url http://localhost:${port}`;
+  const script = generateTunnelScript({
+    slug,
+    kind: "cloudflared-quick",
+    port,
+    command,
+    url: null,
+    notes: "Quick tunnel URL is random — printed in the tunnel terminal. Use 'agent_output' verify mode and have the agent emit it.",
+  });
+  return { script, url: null };
+}
+
+function generateTunnelScript({ slug, kind, port, command, url, notes }) {
+  const path = resolve(repoRoot, "scripts", `tunnel-${slug}.sh`);
+  const lines = [
+    "#!/usr/bin/env bash",
+    `# Tunnel helper for Symphony · workflow slug: ${slug}`,
+    "# Auto-generated by scripts/init.mjs.",
+    "#",
+    "# Run this in a separate terminal BEFORE starting the symphony daemon.",
+    "# IRIS will navigate to the URL this tunnel exposes for browser verification.",
+    "",
+    "set -euo pipefail",
+    "",
+    `# Provider: ${kind}`,
+    `# Local port: ${port}`,
+    url ? `# Public URL: ${url}` : "# Public URL: random — printed below when tunnel comes up",
+    notes ? `# Note: ${notes}` : "",
+    "",
+    `exec ${command}`,
+    "",
+  ].filter((line) => line !== "" || true);
+  writeFileSync(path, lines.join("\n"), { mode: 0o755 });
+  ok(`wrote tunnel helper: ${path}`);
+  return { path, kind, port, command, url };
+}
+
+function workflowSlug(project) {
+  return slug(project?.title ?? "default");
 }
 
 async function maybeAddNeedsHumanOption(token, projectId, options, desiredName) {
@@ -592,8 +738,17 @@ function renderWorkflow(opts) {
     lines.push("  enabled: true");
     lines.push("  trigger: after_agent_signal");
     lines.push("  signal_marker: VERIFY_REQUESTED");
-    lines.push("  url_source: agent_output");
-    lines.push("  agent_output_key: verify_url");
+    const verifyMode = opts.verify?.mode ?? "agent_output";
+    const verifyUrl = opts.verify?.url ?? "";
+    if (verifyMode === "static" && verifyUrl) {
+      // Try agent first (lets the agent override per turn), fall back to the static tunnel/deploy URL.
+      lines.push("  url_source: [agent_output, static]");
+      lines.push("  agent_output_key: verify_url");
+      lines.push(`  url_static: ${yaml(verifyUrl)}`);
+    } else {
+      lines.push("  url_source: agent_output");
+      lines.push("  agent_output_key: verify_url");
+    }
     lines.push("  on_pass:");
     lines.push("    transition_to: 'In Review'");
     lines.push("    comment_template: 'Verified by IRIS. {{ result.summary }}'");

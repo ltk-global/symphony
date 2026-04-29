@@ -88,6 +88,39 @@ defaults to `./WORKFLOW.md`) that contains:
 The file is intentionally small enough that you can edit it after running
 init — the wizard is a starting point, not a black box.
 
+### Browser verify with a local tunnel
+
+If you want IRIS to verify changes against a **local** dev server (not a
+deployed app), the wizard handles tunnel setup. Pick `[n]grok` or
+`[c]loudflared` in the "Verify URL" prompt. Tradeoffs:
+
+| | ngrok | cloudflared |
+|---|---|---|
+| Free fixed domain | ✅ one `*.ngrok-free.app` per account | ❌ quick tunnels are random per-session |
+| Account/login required | yes (one-time `ngrok config add-authtoken`) | no for quick tunnels |
+| Stable URL across restarts | yes (with fixed domain) | only with named tunnels (`cloudflared tunnel login` + `tunnel create`) |
+| SSE / WebSockets on tunneled app | ✅ | ❌ on quick tunnels (200-req limit, no SSE); ✅ on named tunnels |
+| Best for | regular dev where the tunnel runs alongside | one-off "show me what works" runs |
+
+When you pick a tunnel, the wizard writes a `scripts/tunnel-<slug>.sh` helper
+containing the exact command. Run it in a separate terminal **before**
+starting the daemon. With a fixed domain, the URL stays the same across
+restarts and is hard-coded into `verify.url_static` in your `WORKFLOW.md`;
+with a random URL, leave the verify mode as `agent_output` and have the
+agent emit `{"verify_url": "..."}` in its final JSON line each turn.
+
+The IRIS bits the wizard captures:
+
+- **Token** at <https://swarmy.firsttofly.com/settings> → API Tokens (starts `swm_`). Pasted into the wizard with hidden input; never written to disk.
+- **Profile** at <https://swarmy.firsttofly.com/profiles>. Default `claude-default-latest` works for public sites; create a profile via the Swarmy UI when you need pre-baked auth state.
+- **Concurrency**: per-account quota is 3 containers, no per-minute billing — runs as long as your verify takes.
+
+When IRIS sees something it can't solve (CAPTCHA, MFA, consent modal), it
+emits a `blocked` event with a VNC URL. Symphony's default `on_blocked:
+needs_human` posts the VNC URL as a comment on the issue and transitions
+the project item to `Needs Human` — you click the VNC URL, finish the
+step, and put the item back to `Todo` for the daemon to pick up again.
+
 ### Manual path (no wizard)
 
 If you'd rather hand-author:
