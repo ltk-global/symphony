@@ -398,9 +398,41 @@ type NormalizedEvent =
 
 Both adapters must produce these normalized events. Adapter-specific raw events MAY be logged to a separate diagnostic stream but MUST NOT leak into the orchestrator's state-machine logic.
 
-### 10a. Codex Adapter (INHERITED)
+### 10a. Codex Adapter (MODIFIED)
 
-Verbatim upstream Symphony §10. Launch: `bash -lc "${codex.command}"` with cwd=workspace. Handshake: `initialize` → `initialized` → `thread/start` → `turn/start`. Continuation turns reuse the same `threadId`. Approval/sandbox values pass through to Codex App Server. Tool-call mapping: when the agent calls `iris_run` (advertised at `thread/start` if `tools.iris_run.enabled`), the adapter intercepts the tool call, invokes IrisClient (§14), waits for completion, and returns the result via the protocol's tool-result message.
+Launch: `bash -lc "${codex.command}"` with cwd=workspace.
+
+Handshake (verified against `codex app-server` v0.125.0, 2026-04-29):
+
+1. Client → server: `initialize` request with
+   `{protocolVersion: "2024-11-05", capabilities: {}, clientInfo: {name, version}}`.
+2. Server → client: id-matched `initialize` result `{userAgent, codexHome,
+   platformFamily, platformOs}`. The server does NOT emit a separate
+   `initialized` notification (this differs from the older upstream Symphony
+   protocol).
+3. Client → server: `notifications/initialized` notification (no id).
+4. Client → server: `thread/start` request with `{cwd, ...config}`.
+5. Server → client: id-matched `thread/start` result `{thread: {id, ...},
+   model, ...}`. The server also emits a `thread/started` notification with
+   the same thread payload — both carry the canonical thread id.
+6. Client → server: `turn/start` request with
+   `{threadId, input: [{type: "text", text: <prompt>}]}`. Server responds
+   id-matched with the turn record and emits `turn/started` followed by a
+   stream of `item/started`, `item/agentMessage/delta`, `item/completed`,
+   `thread/tokenUsage/updated`, and finally `turn/completed` (or
+   `turn/failed`) notifications.
+
+Continuation turns reuse the captured `threadId` with another `turn/start`
+request. Approval/sandbox values pass through under `params` of `thread/start`.
+
+Tool-call mapping: when the agent calls `iris_run` (advertised at `thread/start`
+under `tools` if `tools.iris_run.enabled`), the adapter intercepts the
+tool call, invokes IrisClient (§14), waits for completion, and returns the
+result via the protocol's tool-result message. The adapter normalizes the slash
+notification names (`thread/started`, `turn/completed`, `item/completed`, etc.)
+to the standard `NormalizedEvent` vocabulary; `item/agentMessage/delta` chunks
+are accumulated and emitted as a single `message{final:true}` when the matching
+`item/completed` arrives.
 
 ### 10b. Claude Code Adapter (NEW)
 
@@ -563,14 +595,27 @@ interface IrisClient {
   }): Promise<IrisRunResult>;
 }
 
+// Wire shapes below match the actual Swarmy SSE format observed at
+// swarmy.firsttofly.com (verified 2026-04-29). They diverge from upstream
+// Symphony's documented shapes, hence MODIFIED:
+//   - `result` carries `content` (not `output`).
+//   - `done` has no `status` field; final status is inferred client-side from
+//     prior events (a prior `result` ⇒ "success"; a prior `blocked` ⇒
+//     "blocked"; otherwise "error").
+//   - `ready` includes `phase`, `worker_id`, `web_ui_url`, and `vnc_url`
+//     alongside `container_id`. The `blocked` event's `vnc_url` is identical
+//     to the one already advertised in `ready`.
+//   - `progress` has `phase` plus `message`.
+// The IrisClient parser is tolerant — unknown fields land in `events[]` and
+// known fields are extracted defensively.
 type IrisEvent =
-  | { event: 'ready'; container_id: string }
-  | { event: 'progress'; message: string }
-  | { event: 'activity'; tool: string; data: unknown }
-  | { event: 'delta'; text: string }
-  | { event: 'result'; output: string }
-  | { event: 'done'; status: 'success' | 'error' | 'blocked' }
-  | { event: 'blocked'; vnc_url: string; reason: string };
+  | { event: 'ready'; container_id: string; vnc_url?: string; phase?: string; worker_id?: string; web_ui_url?: string }
+  | { event: 'progress'; phase?: string; message?: string }
+  | { event: 'activity'; tool?: string; data?: unknown }
+  | { event: 'delta'; content?: string }
+  | { event: 'result'; content?: string; container_id?: string }
+  | { event: 'done'; status?: 'success' | 'error' | 'blocked' }
+  | { event: 'blocked'; vnc_url?: string; reason?: string };
 
 interface IrisRunResult {
   status: 'success' | 'error' | 'blocked';
@@ -621,7 +666,7 @@ Tool spec advertised to the agent at session start when `agent.tools.iris_run.en
 }
 ```
 
-Agent-side flow:
+Agent-side flow (Codex path — adapter intercepts directly):
 
 1. Agent emits a `tool_call` for `iris_run` with arguments.
 2. Adapter increments `iris_calls_in_turn`. If `> max_calls_per_turn`, return a tool error `iris_run_call_limit_exceeded` and continue the turn.
@@ -633,6 +678,31 @@ Agent-side flow:
    - If `iris.on_blocked == "needs_human"`: do NOT return a tool result. Cancel the agent session, transition the project item Status to `tracker.needs_human_state` via the GitHub adapter, post the rendered `blocked_comment_template` as an item comment, and emit `turn_failed` with reason `iris_blocked_handed_off`. Orchestrator releases the claim normally; the item leaves `active_states`.
    - If `iris.on_blocked == "fail"`: return tool error and let the agent fail the turn; orchestrator retries per backoff.
    - If `iris.on_blocked == "pass_through"`: return `{blocked: {...}, events}` to the agent as a tool result; agent decides.
+
+Claude Code path (MCP-routed). The Claude subprocess calls
+`mcp__symphony__iris_run` against an in-process MCP server (`claude_iris_mcp.ts`)
+spawned per Claude session. Because the adapter cannot intercept MCP tool calls
+mid-flight, enforcement happens inside the MCP server, parameterized via env
+vars set by the orchestrator (`SYMPHONY_IRIS_MAX_CALLS_PER_TURN`,
+`SYMPHONY_IRIS_ALLOW_PROFILE_OVERRIDE`, `SYMPHONY_IRIS_ON_BLOCKED`,
+`SYMPHONY_BLOCKED_MARKER_PATH`). The MCP server is freshly spawned for each
+turn (the adapter re-launches `claude --resume` per turn), so a process-local
+counter is equivalent to the per-turn cap. Concurrency continues to share the
+single `iris.max_concurrent` semaphore via a filesystem-backed semaphore keyed
+on `SYMPHONY_IRIS_SHARED_SEMAPHORE_KEY`.
+
+`on_blocked` semantics on the Claude path:
+
+- `needs_human`: the MCP server writes a JSON marker to
+  `${workspace}/.symphony/iris-blocked.json` containing `{vncUrl, reason,
+  writtenAt}` and returns a JSON-RPC error to Claude. The orchestrator
+  consumes the marker after the session ends, transitions Status to
+  `tracker.needs_human_state`, posts `blocked_comment_template`, and skips the
+  retry. The marker is unlinked after consumption.
+- `fail`: MCP returns a JSON-RPC error to Claude (no marker); the agent's turn
+  fails and the orchestrator retries per backoff.
+- `pass_through`: MCP returns the blocked result to Claude as a normal tool
+  result; the agent decides.
 
 ### 14.5 Model B — Verify-Stage Calls
 
