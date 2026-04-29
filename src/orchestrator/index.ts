@@ -6,6 +6,7 @@ import type { Issue, NormalizedEvent, ToolResult, ToolSpec } from "../types.js";
 import type { VerifyRunResult, VerifyStage } from "../verify/stage.js";
 import type { WorkspaceManager } from "../workspace/manager.js";
 import type { EventLog } from "../observability/event_log.js";
+import { TurnRecorder } from "../observability/turn_recorder.js";
 
 const BLOCKED_MARKER_RELATIVE_PATH = join(".symphony", "iris-blocked.json");
 
@@ -121,7 +122,15 @@ export class Orchestrator {
         tools: toolAvailability,
       });
       await this.options.workspace.beforeRun?.(workspace, issue, attempt);
-      const session = await this.options.runner.start({ workspacePath: workspace.path, prompt, issue, attempt, tools, abortSignal: abort.signal });
+      const turnRecorder = this.options.config.dataDir ? new TurnRecorder({ dataDir: this.options.config.dataDir, issueId: issue.id }) : null;
+      const openTurnSink = turnRecorder
+        ? async () => {
+            const sink = await turnRecorder.open();
+            void this.emitEvent({ type: "turn_recording_started", issue, payload: { path: sink.path } });
+            return sink;
+          }
+        : undefined;
+      const session = await this.options.runner.start({ workspacePath: workspace.path, prompt, issue, attempt, tools, abortSignal: abort.signal, openTurnSink });
       if (!session) {
         this.live.delete(issue.id);
         await this.emitEvent({ type: "dispatch_aborted", issue, payload: { reason: "runner_returned_null" } });

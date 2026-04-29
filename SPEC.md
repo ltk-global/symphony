@@ -630,7 +630,29 @@ Write semantics:
 - Rotation/retention is operator-controlled (logrotate, etc.). The daemon
   does not rotate the file itself.
 
-### 13.3 Snapshot Interface
+### 13.3 Raw Agent Stream Capture (NEW)
+
+For post-mortem of a misbehaving agent, the runtime tees the raw protocol
+stream of every agent turn to:
+
+```
+<data_dir>/turns/<sanitized_issue_id>/<iso-timestamp>-t<turnSeq>.jsonl
+```
+
+- `claude_code` adapter: each subprocess spawn (initial + every `--resume`)
+  writes one file containing the raw `--output-format stream-json` lines.
+- `codex` adapter: each `turn/start` rotates to a new file. The file
+  contains both client-to-server JSON-RPC requests (prefixed `>>> `) and
+  server-to-client notifications (prefixed `<<< `) so the full conversation
+  can be reconstructed.
+
+The orchestrator emits a `turn_recording_started` event with the file `path`
+each time a sink is opened, allowing operators to find the right file via
+`grep turn_recording_started events.jsonl`.
+
+Rotation/retention is operator-controlled.
+
+### 13.4 Snapshot Interface
 
 Snapshot interface adds:
 

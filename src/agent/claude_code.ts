@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { NormalizedEvent } from "../types.js";
 import type { AgentRunner, AgentSession } from "./types.js";
+import type { TurnSink } from "../observability/turn_recorder.js";
 
 export interface ClaudeCodeOptions {
   command: string;
@@ -26,20 +27,29 @@ export class ClaudeCodeAdapter implements AgentRunner {
     const children: Array<ChildProcessByStdio<null, Readable, Readable>> = [];
     const toolRegistration = buildClaudeToolRegistration(input.tools, input.issue, input.workspacePath);
     let sessionId = "pending";
-    const launch = (args: string[]) => {
+    const launch = async (args: string[]) => {
+      const sink = input.openTurnSink ? await input.openTurnSink().catch(() => null) : null;
       const child = this.spawnProcess(args, input.workspacePath);
       children.push(child);
-      child.once?.("error", () => queue.close());
-      void pumpClaudeEvents(child, (normalized) => {
-        if (normalized.kind === "session_started") sessionId = normalized.sessionId;
-        queue.push(normalized);
-      })
+      child.once?.("error", () => {
+        queue.close();
+        void sink?.close();
+      });
+      void pumpClaudeEvents(
+        child,
+        (normalized) => {
+          if (normalized.kind === "session_started") sessionId = normalized.sessionId;
+          queue.push(normalized);
+        },
+        sink ?? undefined,
+      )
         .then((sawTerminal) => {
           if (!sawTerminal) queue.close();
         })
-        .catch(() => queue.close());
+        .catch(() => queue.close())
+        .finally(() => sink?.close());
     };
-    launch(this.baseArgs(input.prompt, toolRegistration));
+    await launch(this.baseArgs(input.prompt, toolRegistration));
     const adapter = this;
 
     return {
@@ -49,7 +59,7 @@ export class ClaudeCodeAdapter implements AgentRunner {
       events: queue,
       async startTurn(turnInput) {
         if (sessionId === "pending") throw new Error("claude_code_session_id_not_available");
-        launch(adapter.resumeArgs(sessionId, continuationPrompt(turnInput.text, turnInput.toolResults), toolRegistration));
+        await launch(adapter.resumeArgs(sessionId, continuationPrompt(turnInput.text, turnInput.toolResults), toolRegistration));
       },
       async cancel(reason: string) {
         for (const child of children) child.kill("SIGTERM");
@@ -120,11 +130,16 @@ export function mapClaudeStreamEvent(raw: any): NormalizedEvent | NormalizedEven
   return null;
 }
 
-async function pumpClaudeEvents(child: ChildProcessByStdio<null, Readable, Readable>, push: (event: NormalizedEvent) => void): Promise<boolean> {
+async function pumpClaudeEvents(
+  child: ChildProcessByStdio<null, Readable, Readable>,
+  push: (event: NormalizedEvent) => void,
+  sink?: TurnSink,
+): Promise<boolean> {
   let sawTerminal = false;
   const lines = createInterface({ input: child.stdout });
   for await (const line of lines) {
     if (!line.trim()) continue;
+    sink?.write(line);
     const mapped = mapClaudeStreamEvent(JSON.parse(line));
     const list = Array.isArray(mapped) ? mapped : mapped ? [mapped] : [];
     for (const normalized of list) {

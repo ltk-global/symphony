@@ -1,4 +1,5 @@
 import type { Issue, NormalizedEvent, ToolResult, ToolSpec } from "../types.js";
+import type { TurnSink } from "../observability/turn_recorder.js";
 
 export interface AgentRunner {
   start(input: {
@@ -8,6 +9,7 @@ export interface AgentRunner {
     attempt: number | null;
     tools: ToolSpec[];
     abortSignal: AbortSignal;
+    openTurnSink?: () => Promise<TurnSink>;
   }): Promise<AgentSession>;
 }
 

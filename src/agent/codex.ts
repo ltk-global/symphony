@@ -8,6 +8,7 @@ import type { Readable, Writable } from "node:stream";
 import type { NormalizedEvent } from "../types.js";
 import { resolveMcpServerCommand } from "./claude_code.js";
 import type { AgentRunner, AgentSession } from "./types.js";
+import type { TurnSink } from "../observability/turn_recorder.js";
 
 export interface CodexSpawnOptions {
   cwd: string;
@@ -54,11 +55,29 @@ export class CodexAdapter implements AgentRunner {
     let turnDispatched = false;
     const messages = new Map<string, MessageBuffer>();
 
-    const write = (message: unknown) => child.stdin.write(JSON.stringify(message) + "\n");
-    child.once?.("error", () => queue.close());
+    let currentSink: TurnSink | null = input.openTurnSink ? await input.openTurnSink().catch(() => null) : null;
+    const rotateSink = async () => {
+      const previous = currentSink;
+      currentSink = input.openTurnSink ? await input.openTurnSink().catch(() => null) : null;
+      await previous?.close();
+    };
+
+    const write = (message: unknown) => {
+      const line = JSON.stringify(message);
+      currentSink?.write(`>>> ${line}`);
+      child.stdin.write(line + "\n");
+    };
+    child.once?.("error", () => {
+      queue.close();
+      void currentSink?.close();
+    });
+    child.once?.("exit", () => {
+      void currentSink?.close();
+    });
 
     const onRawEvent = this.options.onRawEvent;
     void pumpCodexEvents(child, (raw) => {
+      currentSink?.write(`<<< ${JSON.stringify(raw)}`);
       onRawEvent?.(raw);
       if (process.env.SYMPHONY_CODEX_DEBUG) {
         const summary = raw.method ?? `id:${raw.id}${raw.error ? " ERROR" : raw.result ? " ok" : ""}`;
@@ -120,6 +139,7 @@ export class CodexAdapter implements AgentRunner {
       events: queue,
       async startTurn(turnInput) {
         if (!threadId) throw new Error("codex_thread_id_not_available");
+        await rotateSink();
         const id = nextRequestId++;
         turnStartId = id;
         const text = continuationPrompt(turnInput.text, turnInput.toolResults);
