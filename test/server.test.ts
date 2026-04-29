@@ -164,6 +164,28 @@ describe("ConsoleServer endpoints", () => {
     expect(body.error.code).toBe("bad_path");
   });
 
+  it("accepts owner/repo#N issue identifiers via /api/v1/issues/<id>", async () => {
+    // Encoded: /api/v1/issues/repo%231 -> "repo#1"
+    // Already covered by an earlier test. Belt-and-suspenders: also test the
+    // fully-qualified owner/repo#N shape that real GitHub Projects emit.
+    const res = await fetch(baseUrl + "/api/v1/issues/" + encodeURIComponent("ltk-global/symphony-todo-demo#4"));
+    // We don't have that issue in the fake snapshot, so 404 is the success
+    // condition — the important thing is "not 400 bad_path".
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error.code).toBe("issue_not_found");
+  });
+
+  it("accepts owner/repo#N issue identifiers via /issues/<id> HTML route", async () => {
+    const res = await fetch(baseUrl + "/issues/" + encodeURIComponent("ltk-global/symphony-todo-demo#4"));
+    // Identifier is unknown to the fake snapshot, but the renderer should still
+    // produce the per-issue HTML shell (events: empty, turnFiles: empty). The
+    // critical assertion is no bad_path 400.
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("ltk-global/symphony-todo-demo#4");
+  });
+
   it("405 on unsupported method", async () => {
     const res = await fetch(baseUrl + "/", { method: "DELETE" });
     expect(res.status).toBe(405);

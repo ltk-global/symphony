@@ -79,7 +79,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
   const issueMatch = pathname.match(/^\/issues\/([^/]+)$/);
   if (issueMatch) {
     if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(res);
-    const identifier = decodeSegment(issueMatch[1]!);
+    const identifier = decodeIdentifierSegment(issueMatch[1]!);
     if (identifier === null) return badPath(res);
     return renderIssueResponse(res, ctx, identifier);
   }
@@ -87,7 +87,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
   const apiIssueMatch = pathname.match(/^\/api\/v1\/issues\/([^/]+)$/);
   if (apiIssueMatch) {
     if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(res);
-    const identifier = decodeSegment(apiIssueMatch[1]!);
+    const identifier = decodeIdentifierSegment(apiIssueMatch[1]!);
     if (identifier === null) return badPath(res);
     return apiIssue(res, ctx, identifier);
   }
@@ -95,8 +95,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
   const turnMatch = pathname.match(/^\/issues\/([^/]+)\/turns\/([^/]+)$/);
   if (turnMatch) {
     if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(res);
-    const identifier = decodeSegment(turnMatch[1]!);
-    const fileName = decodeSegment(turnMatch[2]!);
+    const identifier = decodeIdentifierSegment(turnMatch[1]!);
+    const fileName = decodeFilenameSegment(turnMatch[2]!);
     if (identifier === null || fileName === null) return badPath(res);
     return renderTurnResponse(res, ctx, identifier, fileName);
   }
@@ -107,13 +107,26 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Req
   return methodNotAllowed(res);
 }
 
-function decodeSegment(segment: string): string | null {
+// Issue identifiers can legitimately contain `/` (owner/repo) and `#` (issue number).
+// They never reach the filesystem directly — orchestrator code sanitizes issueId
+// before composing any path. So we only block traversal markers and NUL.
+function decodeIdentifierSegment(segment: string): string | null {
   let decoded: string;
-  try {
-    decoded = decodeURIComponent(segment);
-  } catch {
-    return null;
-  }
+  try { decoded = decodeURIComponent(segment); }
+  catch { return null; }
+  if (decoded.length === 0) return null;
+  if (decoded.includes("..")) return null;
+  if (decoded.includes("\\")) return null;
+  if (decoded.includes("\0")) return null;
+  return decoded;
+}
+
+// Turn filenames are joined into a path under <dataDir>/turns/<issue>/. They MUST
+// be a single filesystem name — reject any path-shaped value.
+function decodeFilenameSegment(segment: string): string | null {
+  let decoded: string;
+  try { decoded = decodeURIComponent(segment); }
+  catch { return null; }
   if (decoded.length === 0) return null;
   if (decoded.includes("/") || decoded.includes("\\") || decoded.includes("..")) return null;
   if (decoded.includes("\0")) return null;
