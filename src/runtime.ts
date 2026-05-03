@@ -1,9 +1,12 @@
 import { stat } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, resolve, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadWorkflow, renderPrompt } from "./workflow/loader.js";
 import { buildConfig, type ServiceConfig } from "./config/index.js";
 import { GitHubProjectsTracker } from "./tracker/github_projects.js";
-import { WorkspaceManager, type WorkspaceIssueInput } from "./workspace/manager.js";
+import { WorkspaceManager, type WorkspaceIssueInput, type WorkspaceRecipeProvider } from "./workspace/manager.js";
+import { LlmRecipeProvider, type AuthorRecipeFn } from "./workspace/recipes.js";
 import { ClaudeCodeAdapter } from "./agent/claude_code.js";
 import { CodexAdapter } from "./agent/codex.js";
 import { Orchestrator } from "./orchestrator/index.js";
@@ -107,12 +110,21 @@ export async function buildRuntimeComponents(workflowPath: string, env: NodeJS.P
     terminalStates: config.tracker.terminalStates,
     filters: config.tracker.filters,
   });
+  const recipeProvider: WorkspaceRecipeProvider | undefined =
+    config.workspace.cache.strategy === "llm"
+      ? new LlmRecipeProvider({
+          author: createAuthorRecipe(),
+          reviewRequired: config.workspace.cache.reviewRequired,
+          recipeTtlHours: config.workspace.cache.recipeTtlHours,
+        })
+      : undefined;
   const workspace = new WorkspaceManager({
     root: config.workspace.root,
     hooks: config.hooks,
     hookTimeoutMs: config.hooks.timeoutMs,
     cache: config.workspace.cache,
     githubToken: config.tracker.apiToken,
+    recipeProvider,
   });
   const runner =
     config.agent.kind === "codex"
@@ -175,6 +187,44 @@ function aliasIssue(issue: import("./types.js").Issue): Record<string, unknown> 
     created_at: issue.createdAt,
     updated_at: issue.updatedAt,
   };
+}
+
+// Wraps the .mjs `authorRecipe` into the AuthorRecipeFn shape LlmRecipeProvider
+// expects. The .mjs file lives at `<repoRoot>/scripts/lib/workspace-bootstrap.mjs`
+// in BOTH dev (where this module is at `<repoRoot>/src/runtime.ts`) and prod
+// (where the compiled module is at `<repoRoot>/dist/src/runtime.js`) — but
+// `dist/scripts/` doesn't exist. We resolve dynamically by walking up from
+// `import.meta.url` to find a directory containing `scripts/lib/...`. If the
+// file isn't found (e.g., bundled deployment), fall back to a stub that
+// always returns "no LLM available" so the provider falls back to canned
+// templates without crashing.
+let cachedAuthor: AuthorRecipeFn | null = null;
+function createAuthorRecipe(): AuthorRecipeFn {
+  return async (input) => {
+    if (!cachedAuthor) {
+      cachedAuthor = await loadAuthorRecipe();
+    }
+    return cachedAuthor(input);
+  };
+}
+
+async function loadAuthorRecipe(): Promise<AuthorRecipeFn> {
+  const here = fileURLToPath(import.meta.url);
+  let dir = dirname(here);
+  for (let i = 0; i < 6; i++) {
+    const candidate = join(dir, "scripts", "lib", "workspace-bootstrap.mjs");
+    if (existsSync(candidate)) {
+      const mod = await import(pathToFileURL(candidate).href);
+      const fn = mod.authorRecipe;
+      if (typeof fn === "function") {
+        return async (input) => fn({ context: input.context, repoCheckoutDir: input.repoCheckoutDir });
+      }
+      break;
+    }
+    dir = dirname(dir);
+  }
+  log.warn({ from: here }, "workspace_bootstrap_mjs_not_found_using_canned_fallback");
+  return async () => ({ source: null, fallback: true, reason: "bootstrap_mjs_not_found" });
 }
 
 function configureIrisEnvironment(config: ServiceConfig, env: NodeJS.ProcessEnv): void {
