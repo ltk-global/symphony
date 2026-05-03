@@ -133,7 +133,7 @@ describe("WorkspaceManager cache integration", () => {
       cacheDir,
       refsOptions: { cacheRoot },
       recipeProvider,
-      hooks: { afterCreate: 'echo "ok"' },
+      hooks: { afterCreate: 'echo "ok"', beforeRun: 'true' },
       hookTimeoutMs: 30_000,
     });
     const ws = await manager.prepare({ issue: issue(), attempt: null });
@@ -175,7 +175,7 @@ describe("WorkspaceManager cache integration", () => {
       cacheDir,
       refsOptions: { cacheRoot },
       recipeProvider,
-      hooks: { afterCreate: 'echo "ok"' },
+      hooks: { afterCreate: 'echo "ok"', beforeRun: 'true' },
       hookTimeoutMs: 30_000,
     });
     const ws = await manager.prepare({ issue: issue(), attempt: null });
@@ -189,7 +189,7 @@ describe("WorkspaceManager cache integration", () => {
       cache: { strategy: "llm", reviewRequired: false, recipeTtlHours: 168 },
       cacheDir,
       refsOptions: { cacheRoot },
-      hooks: { afterCreate: 'echo "ok"' },
+      hooks: { afterCreate: 'echo "ok"', beforeRun: 'true' },
       hookTimeoutMs: 30_000,
     });
     const ws = await manager.prepare({ issue: issue(), attempt: null });
@@ -208,7 +208,7 @@ describe("WorkspaceManager cache integration", () => {
       cacheDir,
       refsOptions: { cacheRoot },
       recipeProvider,
-      hooks: { afterCreate: 'echo "ok"' },
+      hooks: { afterCreate: 'echo "ok"', beforeRun: 'true' },
       hookTimeoutMs: 30_000,
     });
     const ws = await manager.prepare({ issue: issue(), attempt: null });

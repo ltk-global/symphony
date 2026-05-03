@@ -95,6 +95,7 @@ describe("orchestrator-level workspace cache integration (Layer 4)", () => {
       recipeProvider: provider,
       hooks: {
         afterCreate: `git clone --quiet "$ISSUE_REPO_FULL_NAME" .`,
+        beforeRun: 'true',
       },
       hookTimeoutMs: 30_000,
     });
@@ -132,6 +133,7 @@ describe("orchestrator-level workspace cache integration (Layer 4)", () => {
       recipeProvider: provider,
       hooks: {
         afterCreate: `git clone --quiet "$ISSUE_REPO_FULL_NAME" .`,
+        beforeRun: 'true',
       },
       hookTimeoutMs: 30_000,
     });

@@ -146,6 +146,12 @@ export class WorkspaceManager {
     if (this.cache.strategy !== "llm") return;
     if (!this.recipeProvider) return;
     if (!issue.repoFullName) return;
+    // Skip recipe authoring when no hook will actually source the recipe.
+    // Saves an LLM round-trip per first-dispatch when an operator left the
+    // strategy at its default `llm` but didn't wire a before_run consumer.
+    if (!this.hooks.beforeRun.trim() && !this.hooks.afterCreate.includes("SYMPHONY_RECIPE")) {
+      return;
+    }
     try {
       const result = await this.recipeProvider.ensureRecipe({
         // Use repoFullName as the cache key on both sides (daemon + wizard
