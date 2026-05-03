@@ -48,9 +48,11 @@ const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
 ];
 
 const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
-  // Allow optional path prefix (`/bin/bash`) and `env` wrapper before the
-  // shell name so `curl x | /bin/bash` and `curl x | env bash` don't slip.
-  { pattern: /\b(curl|wget|fetch)\b[^\n]*\|\s*(?:env\s+)?(?:[^\s|]*\/)?(bash|sh|zsh)\b/i, label: "pipe-to-shell" },
+  // Allow optional path-prefix on env (`/usr/bin/env`), arbitrary env
+  // arguments (`env -i`, `env -u FOO`, `env FOO=bar`), and optional
+  // path-prefix on the shell name itself. The reluctant `\S+` repeat lets
+  // the shell-name match anchor itself at the actual end of the env args.
+  { pattern: /\b(curl|wget|fetch)\b[^\n]*\|\s*(?:(?:[^\s|]*\/)?env(?:\s+\S+)*?\s+)?(?:[^\s|]*\/)?(bash|sh|zsh)\b/i, label: "pipe-to-shell" },
   // Catch backtick command substitution (`eval \`...\``) as well as the
   // quote-/`$`-prefixed forms.
   { pattern: /\beval\s+["'$`]/, label: "eval-of-dynamic-input" },
