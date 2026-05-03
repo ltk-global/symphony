@@ -170,9 +170,15 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
     .replace(/\\\n/g, "")
     .replace(/\|\s*\n\s*/g, "| ");
 
-  // Blocklist layer
+  // Blocklist layer — run against BOTH the raw body and the normalized
+  // joined form, since each catches what the other misses:
+  //   - joinedBody catches multi-line / pipe-newline / comment-newline forms
+  //     after stripping bash continuations and line-comments.
+  //   - body catches `#` inside quoted strings (where joinedBody would
+  //     wrongly strip the trailing destructive command). Comment stripping
+  //     is not quote-aware; running on raw body covers the gap.
   for (const rule of BLOCKLIST) {
-    if (rule.pattern.test(joinedBody)) {
+    if (rule.pattern.test(joinedBody) || rule.pattern.test(body)) {
       errors.push(`blocklist: ${rule.label}`);
     }
   }
