@@ -69,14 +69,14 @@ describe("LlmRecipeProvider", () => {
     // First call writes; we need its inputHash to match a re-read.
     // Override goodAuthor to compute inputHash that matches actual repo contents.
     goodAuthor.mockImplementation(async (input: any) => {
-      const { computeInputHashForTest } = await import("../src/workspace/recipes.js");
+      const { computeInputHash } = await import("../src/workspace/recipes.js");
       return {
         source: "llm",
         fallback: false,
         recipe: "npm ci",
         manifest: {
           ...baseManifest,
-          inputHash: await computeInputHashForTest(input.repoCheckoutDir, ["package-lock.json"]),
+          inputHash: await computeInputHash(input.repoCheckoutDir, ["package-lock.json"]),
         },
       };
     });
@@ -91,14 +91,14 @@ describe("LlmRecipeProvider", () => {
   it("input drift triggers regen", async () => {
     const p = new LlmRecipeProvider({ cacheRoot, author: goodAuthor as any });
     goodAuthor.mockImplementation(async (input: any) => {
-      const { computeInputHashForTest } = await import("../src/workspace/recipes.js");
+      const { computeInputHash } = await import("../src/workspace/recipes.js");
       return {
         source: "llm",
         fallback: false,
         recipe: "npm ci",
         manifest: {
           ...baseManifest,
-          inputHash: await computeInputHashForTest(input.repoCheckoutDir, ["package-lock.json"]),
+          inputHash: await computeInputHash(input.repoCheckoutDir, ["package-lock.json"]),
         },
       };
     });
@@ -139,7 +139,7 @@ describe("LlmRecipeProvider", () => {
   it("two concurrent ensureRecipe calls only invoke the author once", async () => {
     const p = new LlmRecipeProvider({ cacheRoot, author: goodAuthor as any });
     goodAuthor.mockImplementation(async (input: any) => {
-      const { computeInputHashForTest } = await import("../src/workspace/recipes.js");
+      const { computeInputHash } = await import("../src/workspace/recipes.js");
       // Simulate slow LLM so the second caller hits the lock.
       await new Promise((r) => setTimeout(r, 50));
       return {
@@ -149,7 +149,7 @@ describe("LlmRecipeProvider", () => {
         manifest: {
           ...baseManifest,
           repoId: "R2",
-          inputHash: await computeInputHashForTest(input.repoCheckoutDir, ["package-lock.json"]),
+          inputHash: await computeInputHash(input.repoCheckoutDir, ["package-lock.json"]),
         },
       };
     });

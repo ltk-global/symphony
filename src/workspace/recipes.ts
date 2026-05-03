@@ -5,11 +5,12 @@
 // the spec preamble/postamble forced around the body. A flock around the
 // generation phase makes concurrent prepares share work for the same repoId.
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile, open, unlink } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { validateRecipe, type RecipeManifest } from "./recipe_validator.js";
+import { withLock } from "./_lock.js";
 
 export interface AuthorRecipeFn {
   (input: { context: { repoId: string; repoFullName: string }; repoCheckoutDir: string }): Promise<
@@ -54,11 +55,6 @@ const POSTAMBLE = `
 exit 0
 `;
 
-const LOCK_RETRY_MS = 50;
-// 15 min — long enough for an LLM author call (default 2-min runner timeout
-// times a small retry budget) without giving up early under contention.
-const LOCK_TIMEOUT_MS = 900_000;
-
 export class LlmRecipeProvider {
   private cacheRoot: string;
   private author: AuthorRecipeFn;
@@ -72,14 +68,12 @@ export class LlmRecipeProvider {
     this.recipeTtlHours = opts.recipeTtlHours ?? 168;
   }
 
-  paths(repoId: string) {
+  private paths(repoId: string) {
     const safe = repoId.replace(/[^A-Za-z0-9._-]/g, "_");
     const dir = join(this.cacheRoot, "recipes");
     return {
       sh: join(dir, `${safe}.sh`),
       json: join(dir, `${safe}.json`),
-      pendingSh: join(dir, `${safe}.sh.pending`),
-      pendingJson: join(dir, `${safe}.json.pending`),
       lock: join(dir, `${safe}.lock`),
     };
   }
@@ -92,7 +86,7 @@ export class LlmRecipeProvider {
     const cached = await this.tryLoadCached(p.sh, p.json, input);
     if (cached) return cached;
 
-    return await withLock(p.lock, async () => {
+    return await withLock(p.lock, { errorPrefix: "recipe_lock_timeout" }, async () => {
       // Re-check inside the lock — a concurrent caller may have just generated.
       const cachedInside = await this.tryLoadCached(p.sh, p.json, input);
       if (cachedInside) return cachedInside;
@@ -117,16 +111,23 @@ export class LlmRecipeProvider {
         return await this.writeFallback(p, input);
       }
 
-      const finalSh = PREAMBLE(fullManifest) + result.recipe + POSTAMBLE;
-      if (this.reviewRequired) {
-        await writeFile(p.pendingSh, finalSh, { mode: 0o600 });
-        await writeFile(p.pendingJson, JSON.stringify(fullManifest, null, 2), { mode: 0o600 });
-        return { recipePath: p.pendingSh, manifest: fullManifest, generated: true };
-      }
-      await writeFile(p.sh, finalSh, { mode: 0o600 });
-      await writeFile(p.json, JSON.stringify(fullManifest, null, 2), { mode: 0o600 });
-      return { recipePath: p.sh, manifest: fullManifest, generated: true };
+      return await this.persist(p, fullManifest, result.recipe);
     });
+  }
+
+  private async persist(
+    p: { sh: string; json: string },
+    manifest: RecipeManifest,
+    body: string,
+  ): Promise<EnsureResult> {
+    const sh = PREAMBLE(manifest) + body + POSTAMBLE;
+    const json = JSON.stringify(manifest, null, 2);
+    const target = this.reviewRequired
+      ? { sh: `${p.sh}.pending`, json: `${p.json}.pending` }
+      : p;
+    await writeFile(target.sh, sh, { mode: 0o600 });
+    await writeFile(target.json, json, { mode: 0o600 });
+    return { recipePath: target.sh, manifest, generated: true };
   }
 
   private async tryLoadCached(
@@ -152,7 +153,7 @@ export class LlmRecipeProvider {
   }
 
   private async writeFallback(
-    p: ReturnType<LlmRecipeProvider["paths"]>,
+    p: { sh: string; json: string },
     input: EnsureInput,
   ): Promise<EnsureResult> {
     const fallbackBody = `# canned fallback (no LLM available or invalid recipe)
@@ -178,19 +179,43 @@ fi
       approvedBy: null,
       approvedAt: null,
     };
-    const sh = PREAMBLE(manifest) + fallbackBody + POSTAMBLE;
+    return await this.persistInternal(p, manifest, fallbackBody);
+  }
+
+  private async persistInternal(
+    p: { sh: string; json: string },
+    manifest: RecipeManifest,
+    body: string,
+  ): Promise<EnsureResult> {
+    // Fallbacks always write to the final `.sh`/`.json` (review mode applies
+    // only to LLM-authored recipes — we don't gate cans). Keep separate from
+    // `persist()` so this isn't accidentally subjected to reviewRequired.
+    const sh = PREAMBLE(manifest) + body + POSTAMBLE;
     await writeFile(p.sh, sh, { mode: 0o600 });
     await writeFile(p.json, JSON.stringify(manifest, null, 2), { mode: 0o600 });
     return { recipePath: p.sh, manifest, generated: true };
   }
 }
 
-async function computeInputHash(rootDir: string, files: string[]): Promise<string> {
+// Hash the manifest's declared input set deterministically. Reads in parallel,
+// hashes in sorted order so the hash agrees with the matching .mjs copy in
+// `scripts/lib/workspace-bootstrap.mjs` (parity asserted by
+// `test/recipe_input_hash_parity.test.ts`). Drift between the two would
+// silently invalidate every cached recipe.
+export async function computeInputHash(rootDir: string, files: string[]): Promise<string> {
+  const sorted = [...files].sort();
+  const reads = await Promise.all(
+    sorted.map(async (rel) => {
+      try {
+        return { rel, buf: await readFile(join(rootDir, rel)) };
+      } catch {
+        return { rel, buf: null };
+      }
+    }),
+  );
   const h = createHash("sha256");
-  for (const rel of [...files].sort()) {
-    const p = join(rootDir, rel);
-    if (existsSync(p)) {
-      const buf = await readFile(p);
+  for (const { rel, buf } of reads) {
+    if (buf) {
       h.update(rel + "\0");
       h.update(buf);
       h.update("\0");
@@ -199,51 +224,4 @@ async function computeInputHash(rootDir: string, files: string[]): Promise<strin
     }
   }
   return `sha256:${h.digest("hex")}`;
-}
-
-// Test-only helper so suite can synthesize manifests with hashes that
-// match the fixture repo. Not part of the public API.
-export async function computeInputHashForTest(rootDir: string, files: string[]): Promise<string> {
-  return await computeInputHash(rootDir, files);
-}
-
-// flock — same shape as `refs.ts:withLock` but kept inline so the recipes
-// module doesn't reach into the bare-clone module's privates.
-async function withLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
-  const start = Date.now();
-  let handle: Awaited<ReturnType<typeof open>> | null = null;
-  while (true) {
-    try {
-      handle = await open(lockPath, "wx");
-      break;
-    } catch (err) {
-      if (!isErrnoException(err) || err.code !== "EEXIST") throw err;
-      if (Date.now() - start > LOCK_TIMEOUT_MS) {
-        throw new Error(`recipe_lock_timeout:${lockPath}`);
-      }
-      await sleep(LOCK_RETRY_MS);
-    }
-  }
-  try {
-    return await fn();
-  } finally {
-    try {
-      await handle.close();
-    } catch {
-      // ignore
-    }
-    try {
-      await unlink(lockPath);
-    } catch {
-      // ignore
-    }
-  }
-}
-
-function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
-  return err instanceof Error && "code" in err;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
 }

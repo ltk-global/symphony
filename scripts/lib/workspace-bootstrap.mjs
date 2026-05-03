@@ -11,7 +11,6 @@
 // manifest } or { source: null, fallback: true, reason } so the caller
 // can fall back to a canned template without throwing.
 import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -119,12 +118,23 @@ function extractJson(text) {
   return t;
 }
 
+// MUST stay byte-identical to `src/workspace/recipes.ts:computeInputHash`.
+// Drift between them silently invalidates every cached recipe. Parity is
+// asserted by `test/recipe_input_hash_parity.test.ts`.
 export async function computeInputHash(rootDir, files) {
+  const sorted = [...files].sort();
+  const reads = await Promise.all(
+    sorted.map(async (rel) => {
+      try {
+        return { rel, buf: await readFile(join(rootDir, rel)) };
+      } catch {
+        return { rel, buf: null };
+      }
+    }),
+  );
   const h = createHash("sha256");
-  for (const rel of [...files].sort()) {
-    const p = join(rootDir, rel);
-    if (existsSync(p)) {
-      const buf = await readFile(p);
+  for (const { rel, buf } of reads) {
+    if (buf) {
       h.update(rel + "\0");
       h.update(buf);
       h.update("\0");

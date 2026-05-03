@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import { mkdir, open, rm, unlink } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { withLock } from "./_lock.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -14,12 +15,6 @@ export interface RefsOptions {
   // never lands in remote.origin.url or in fetch error messages.
   authHeader?: string;
 }
-
-const LOCK_RETRY_MS = 50;
-// Long enough to wait out a cold initial bare clone of a large repo
-// (tryClone's own timeout is 10 min). Shorter and concurrent prepares of
-// the same uncached repo would give up here, defeating the cache.
-const LOCK_TIMEOUT_MS = 900_000;
 
 function redactAuth(text: string): string {
   return text.replace(/Authorization: Bearer [^\s'"]+/g, "Authorization: Bearer ***REDACTED***");
@@ -58,7 +53,7 @@ export async function ensureBareClone(
   const bareClonePath = join(root, `${sanitized}.git`);
   const lockPath = join(root, `${sanitized}.git.lock`);
 
-  return withLock(lockPath, async () => {
+  return withLock(lockPath, { errorPrefix: "bare_clone_lock_timeout" }, async () => {
     if (!existsSync(bareClonePath)) {
       await tryClone(cloneUrl, bareClonePath, opts.authHeader);
       return bareClonePath;
@@ -104,41 +99,3 @@ async function tryClone(cloneUrl: string, destPath: string, authHeader: string |
   }
 }
 
-async function withLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
-  const start = Date.now();
-  let handle: Awaited<ReturnType<typeof open>> | null = null;
-  while (true) {
-    try {
-      handle = await open(lockPath, "wx");
-      break;
-    } catch (err) {
-      if (!isErrnoException(err) || err.code !== "EEXIST") throw err;
-      if (Date.now() - start > LOCK_TIMEOUT_MS) {
-        throw new Error(`bare_clone_lock_timeout:${lockPath}`);
-      }
-      await sleep(LOCK_RETRY_MS);
-    }
-  }
-  try {
-    return await fn();
-  } finally {
-    try {
-      await handle.close();
-    } catch {
-      // ignore
-    }
-    try {
-      await unlink(lockPath);
-    } catch {
-      // ignore
-    }
-  }
-}
-
-function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
-  return err instanceof Error && "code" in err;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}

@@ -1,0 +1,57 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { computeInputHash as computeInputHashTs } from "../src/workspace/recipes.js";
+import { computeInputHash as computeInputHashMjs } from "../scripts/lib/workspace-bootstrap.mjs";
+
+// Both copies of computeInputHash MUST produce the same hash for the same
+// input set on the same fixture — otherwise every cached recipe silently
+// invalidates because the .mjs caller (authorRecipe) and the .ts caller
+// (LlmRecipeProvider.tryLoadCached) would compute different inputHashes.
+describe("computeInputHash parity (mjs ↔ ts)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "sym-hash-parity-"));
+    writeFileSync(join(dir, "a.txt"), "alpha");
+    writeFileSync(join(dir, "b.lock"), '{"v":1}');
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("agrees on present files (sorted order, same content)", async () => {
+    const files = ["b.lock", "a.txt"]; // intentionally unsorted at input
+    const ts = await computeInputHashTs(dir, files);
+    const mjs = await computeInputHashMjs(dir, files);
+    expect(ts).toBe(mjs);
+    expect(ts).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
+
+  it("agrees on missing files (sentinel applied identically)", async () => {
+    const files = ["does-not-exist.lock", "also-missing.json"];
+    const ts = await computeInputHashTs(dir, files);
+    const mjs = await computeInputHashMjs(dir, files);
+    expect(ts).toBe(mjs);
+  });
+
+  it("agrees on a mix of present + missing", async () => {
+    const files = ["a.txt", "missing.txt", "b.lock"];
+    const ts = await computeInputHashTs(dir, files);
+    const mjs = await computeInputHashMjs(dir, files);
+    expect(ts).toBe(mjs);
+  });
+
+  it("is deterministic (same inputs → same hash twice in a row)", async () => {
+    const files = ["a.txt", "b.lock"];
+    const a = await computeInputHashTs(dir, files);
+    const b = await computeInputHashTs(dir, files);
+    expect(a).toBe(b);
+  });
+
+  it("changes when content changes", async () => {
+    const files = ["a.txt"];
+    const before = await computeInputHashTs(dir, files);
+    writeFileSync(join(dir, "a.txt"), "beta");
+    const after = await computeInputHashTs(dir, files);
+    expect(before).not.toBe(after);
+  });
+});
