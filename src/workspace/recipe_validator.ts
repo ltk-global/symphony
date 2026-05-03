@@ -119,6 +119,11 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   // Block redirects to home — `> ~/.npmrc`, `>> $HOME/.bashrc`, etc.
   // would mutate the runner's persistent user environment.
   { pattern: />>?\s*["']?(~|\$\{?HOME\b)/i, label: "home-write" },
+  // `cd ..` / `pushd /etc` / `cd $HOME` etc. escape the preamble's
+  // `cd "$WORKSPACE"` and let later relative writes land outside the
+  // workspace. Allowed: subdirectory paths (`cd packages/x`), `./...`,
+  // and `$WORKSPACE`/`$SYMPHONY_CACHE_DIR` non-traversal forms.
+  { pattern: /\b(cd|pushd)\s+["']?(\/+|~|\.\.($|[\s/'";&|])|\$\{?HOME\b|\$\{?(WORKSPACE|SYMPHONY_CACHE_DIR)\}?\/+\.\.)/i, label: "cd-escape" },
   // Chained shell var assignments enabling indirect command expansion:
   // `c=curl; b=bash; $c | $b` would run as `curl | bash` but no other rule
   // matches the literal text. We don't try to track all expansion forms;

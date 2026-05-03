@@ -113,6 +113,10 @@ export async function buildRuntimeComponents(workflowPath: string, env: NodeJS.P
   const recipeProvider: WorkspaceRecipeProvider | undefined =
     config.workspace.cache.strategy === "llm"
       ? new LlmRecipeProvider({
+          // Honor SYMPHONY_CACHE_DIR so the daemon and `symphony recipe …`
+          // CLI operate on the same cache root (otherwise the CLI honors
+          // the override and the daemon falls back to ~/.symphony-cache).
+          cacheRoot: process.env.SYMPHONY_CACHE_DIR,
           author: createAuthorRecipe(),
           reviewRequired: config.workspace.cache.reviewRequired,
           recipeTtlHours: config.workspace.cache.recipeTtlHours,
