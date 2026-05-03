@@ -180,15 +180,17 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
     .replace(/\\\n/g, "")
     .replace(/\|\s*\n\s*/g, "| ");
 
-  // Blocklist layer — run against BOTH the raw body and the normalized
-  // joined form, since each catches what the other misses:
-  //   - joinedBody catches multi-line / pipe-newline / comment-newline forms
-  //     after stripping bash continuations and line-comments.
-  //   - body catches `#` inside quoted strings (where joinedBody would
-  //     wrongly strip the trailing destructive command). Comment stripping
-  //     is not quote-aware; running on raw body covers the gap.
+  // Blocklist layer — run against three views of the body, each catching
+  // what the others miss:
+  //   - body (raw): `#` inside quoted strings is preserved.
+  //   - joinedBody: bash continuations + line comments collapsed so multi-
+  //     line forms (`curl x |\nbash`, `curl x | #c\nbash`) line up.
+  //   - quotelessBody: bash adjacent-quote concatenation
+  //     (`c'url' x | b'ash'`) lined up.
+  // OR of the three is the safety gate.
+  const quotelessBody = body.replace(/['"]/g, "");
   for (const rule of BLOCKLIST) {
-    if (rule.pattern.test(joinedBody) || rule.pattern.test(body)) {
+    if (rule.pattern.test(joinedBody) || rule.pattern.test(body) || rule.pattern.test(quotelessBody)) {
       errors.push(`blocklist: ${rule.label}`);
     }
   }
