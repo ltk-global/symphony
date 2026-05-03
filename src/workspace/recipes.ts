@@ -83,12 +83,20 @@ export class LlmRecipeProvider {
     await mkdir(dirname(p.sh), { recursive: true });
 
     // Lock-free fast path: cache hit short-circuits before we contend.
-    const cached = await this.tryLoadCached(p.sh, p.json, input);
+    // In review mode, a previously-written `.pending` pair counts as
+    // cached — we don't regenerate while an operator is reviewing it.
+    const cached = await this.tryLoadCached(p.sh, p.json, input)
+      ?? (this.reviewRequired
+        ? await this.tryLoadCached(`${p.sh}.pending`, `${p.json}.pending`, input)
+        : null);
     if (cached) return cached;
 
     return await withLock(p.lock, { errorPrefix: "recipe_lock_timeout" }, async () => {
       // Re-check inside the lock — a concurrent caller may have just generated.
-      const cachedInside = await this.tryLoadCached(p.sh, p.json, input);
+      const cachedInside = await this.tryLoadCached(p.sh, p.json, input)
+        ?? (this.reviewRequired
+          ? await this.tryLoadCached(`${p.sh}.pending`, `${p.json}.pending`, input)
+          : null);
       if (cachedInside) return cachedInside;
 
       const result = await this.author({

@@ -223,10 +223,17 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
   // `\uNNNN`/`\UNNNNNNNN`, named `\n`/`\t`/etc.) before stripping quotes
   // and backslashes. Without this, an LLM could spell forbidden words
   // via numeric escapes (`r$'\155'` → `rm`, `c$'u'rl` → `curl`).
+  // String.fromCodePoint throws RangeError for code points above 0x10FFFF
+  // (a malformed `\UFFFFFFFF` from an LLM would crash validateRecipe rather
+  // than triggering fallback). safeFromCodePoint clamps to U+FFFD.
+  const safeFromCodePoint = (cp: number): string => {
+    if (!Number.isFinite(cp) || cp < 0 || cp > 0x10FFFF) return "�";
+    try { return String.fromCodePoint(cp); } catch { return "�"; }
+  };
   const fullyNormalizedBody = joinedBody
     .replace(/\\x([0-9a-fA-F]{2})/g, (_m, h) => String.fromCharCode(parseInt(h, 16)))
     .replace(/\\u([0-9a-fA-F]{4})/g, (_m, h) => String.fromCharCode(parseInt(h, 16)))
-    .replace(/\\U([0-9a-fA-F]{8})/g, (_m, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/\\U([0-9a-fA-F]{8})/g, (_m, h) => safeFromCodePoint(parseInt(h, 16)))
     .replace(/\\([0-7]{1,3})/g, (_m, o) => String.fromCharCode(parseInt(o, 8) & 0xff))
     .replace(/\$?['"]/g, "")
     .replace(/\\(.)/g, "$1");

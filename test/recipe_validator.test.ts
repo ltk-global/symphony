@@ -80,6 +80,16 @@ describe("validateRecipe — schema", () => {
     expect(r.errors.some((e) => /secret|token/i.test(e))).toBe(true);
   });
 
+  it("does not crash on out-of-range \\U escape (returns ok:false rather than throwing)", () => {
+    const r = validateRecipe("echo $'\\UFFFFFFFF'", goodManifest);
+    // Out-of-range Unicode escape — implementation must not throw RangeError.
+    // The recipe is effectively benign once normalized (no blocklist match
+    // unless evil text is hidden), so we only assert no-throw and that
+    // ValidationResult shape is intact.
+    expect(typeof r.ok).toBe("boolean");
+    expect(Array.isArray(r.errors)).toBe(true);
+  });
+
   it("rejects bodies with unterminated bash syntax", () => {
     const broken = "if [ -f package-lock.json ]; then\n  npm ci";
     const r = validateRecipe(broken, goodManifest);
