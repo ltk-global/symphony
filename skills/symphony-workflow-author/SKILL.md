@@ -99,6 +99,11 @@ hooks:
       git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git" .
     fi
     git checkout -B "${ISSUE_BRANCH_NAME:-symphony/${ISSUE_WORKSPACE_KEY}}"
+    # Source the LLM-authored install recipe if Symphony has one cached
+    # for this repo and it's not flagged for review.
+    if [ -n "${SYMPHONY_RECIPE:-}" ] && [ -z "${SYMPHONY_RECIPE_DISABLED:-}" ] && [ -f "$SYMPHONY_RECIPE" ]; then
+      source "$SYMPHONY_RECIPE"
+    fi
 ```
 
 If `context.slack` is provided, also emit a `hooks.on_event` rule (see Slack section below).

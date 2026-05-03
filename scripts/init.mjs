@@ -939,6 +939,11 @@ function renderWorkflow(opts) {
   lines.push("      git clone \"https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git\" .");
   lines.push("    fi");
   lines.push("    git checkout -B \"${ISSUE_BRANCH_NAME:-symphony/${ISSUE_WORKSPACE_KEY}}\"");
+  lines.push("    # Source the LLM-authored install recipe if Symphony has one");
+  lines.push("    # cached for this repo and it's not flagged for review.");
+  lines.push("    if [ -n \"${SYMPHONY_RECIPE:-}\" ] && [ -z \"${SYMPHONY_RECIPE_DISABLED:-}\" ] && [ -f \"$SYMPHONY_RECIPE\" ]; then");
+  lines.push("      source \"$SYMPHONY_RECIPE\"");
+  lines.push("    fi");
   lines.push("");
   lines.push("agent:");
   lines.push(`  kind: ${opts.agentKind}`);
