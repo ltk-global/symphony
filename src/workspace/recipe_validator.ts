@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+
 export interface RecipeManifest {
   schema: string;
   repoId: string;
@@ -58,6 +60,10 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   // path allowed; no branch starts with it. Optional `--` separator and
   // opening quote handle `rm -rf -- "/"` etc.
   { pattern: /rm\s+-[a-z]*r[a-z]*f?\b[^\n;&|]*\s(--\s+)?["']?(\/+|~|\$\{?HOME\b|\.\.\/)/i, label: "destructive-rm" },
+  // Any `..` traversal anywhere in an rm command's operand list — catches
+  // `rm -rf "$WORKSPACE/../sibling"` even though `$WORKSPACE` is allowed
+  // for the leading-target rule above.
+  { pattern: /\brm\s+-[a-z]*r[a-z]*f?\b[^\n;&|]*\.\.\//i, label: "destructive-rm-traversal" },
   { pattern: /\b(sudo|doas|su\s+-)\b/i, label: "sudo" },
   { pattern: /\b(systemctl|launchctl|service)\s+(start|stop|restart|disable|enable|reload)\b/i, label: "system-service" },
   { pattern: /\b(ssh|scp|rsync)\s+[^\n]*@/i, label: "ssh-out" },
@@ -151,7 +157,32 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
     }
   }
 
+  // Bash syntax check — catch unterminated `if`/`for`/`while`, mismatched
+  // braces/parens, etc., before persisting. Falls through silently if bash
+  // isn't on PATH (rare on Symphony's target systems).
+  const syntaxErr = bashSyntaxError(body);
+  if (syntaxErr) errors.push(`bash syntax: ${syntaxErr}`);
+
   return { ok: errors.length === 0, errors };
+}
+
+function bashSyntaxError(body: string): string | null {
+  try {
+    execFileSync("bash", ["-n"], {
+      input: body,
+      stdio: ["pipe", "ignore", "pipe"],
+      timeout: 2000,
+    });
+    return null;
+  } catch (err) {
+    const stderr = (err as { stderr?: Buffer | string })?.stderr;
+    if (stderr) {
+      const text = Buffer.isBuffer(stderr) ? stderr.toString() : stderr;
+      return text.trim().slice(0, 200);
+    }
+    if (err instanceof Error && err.message.includes("ENOENT")) return null;
+    return null;
+  }
 }
 
 function isCacheKey(entry: unknown): boolean {

