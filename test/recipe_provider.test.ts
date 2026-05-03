@@ -5,22 +5,28 @@ import { tmpdir } from "node:os";
 import { LlmRecipeProvider } from "../src/workspace/recipes.js";
 import type { RecipeManifest } from "../src/workspace/recipe_validator.js";
 
-const baseManifest: RecipeManifest = {
-  schema: "symphony.recipe.v1",
-  repoId: "R1",
-  repoFullName: "x/x",
-  generatedBy: "claude-code",
-  generatedAt: "2026-05-03T00:00:00.000Z",
-  inputHash: "sha256:dead",
-  inputFiles: ["package-lock.json"],
-  discoveryFiles: [],
-  cacheKeys: [],
-  lfs: false,
-  submodules: false,
-  notes: "",
-  approvedBy: null,
-  approvedAt: null,
-};
+// Use a fresh timestamp each evaluation so cache-hit tests don't fall off
+// the 168h TTL when the clock advances. Each test that returns this
+// manifest from its author callback gets a current time, well within TTL.
+function makeBaseManifest(): RecipeManifest {
+  return {
+    schema: "symphony.recipe.v1",
+    repoId: "R1",
+    repoFullName: "x/x",
+    generatedBy: "claude-code",
+    generatedAt: new Date().toISOString(),
+    inputHash: "sha256:dead",
+    inputFiles: ["package-lock.json"],
+    discoveryFiles: [],
+    cacheKeys: [],
+    lfs: false,
+    submodules: false,
+    notes: "",
+    approvedBy: null,
+    approvedAt: null,
+  };
+}
+const baseManifest = makeBaseManifest();
 
 function makeAuthor() {
   return vi.fn().mockResolvedValue({

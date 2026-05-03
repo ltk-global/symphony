@@ -85,6 +85,12 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   // bare `rm -rf ..`. The lookahead requires `..` to be followed by a path
   // separator, whitespace, quote, statement separator, or end of input.
   { pattern: /\brm\b[^\n;&|]*\.\.(?=[/\s"';|&]|$)/i, label: "destructive-rm-traversal" },
+  // `find … -delete` and `find … -exec rm …` are destructive equivalents
+  // that the rm-only rules miss. `find` has no legitimate use in an install
+  // recipe — block both forms outright.
+  { pattern: /\bfind\b[^\n;&|]*(-delete\b|-exec\s+(\/\S*\/)?rm\b)/i, label: "find-delete" },
+  // `xargs rm …` (or with `-I {} rm …`) is another rm-bypass route.
+  { pattern: /\bxargs\b[^\n;&|]*\brm\b/i, label: "xargs-rm" },
   // `\bsu\s+-\b` doesn't work — `-` is non-word so `\b` after it requires
   // a word char immediately, which fails for the common `su - root` form.
   // Drop the trailing boundary on the `su -` branch.
