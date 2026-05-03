@@ -802,7 +802,9 @@ function renderWorkflow(opts) {
   lines.push("    set -euo pipefail");
   lines.push("    if [ -z \"${ISSUE_REPO_FULL_NAME:-}\" ]; then exit 0; fi");
   lines.push("    if [ -n \"${SYMPHONY_REPO_REF:-}\" ] && [ -d \"$SYMPHONY_REPO_REF\" ]; then");
-  lines.push("      git clone --reference \"$SYMPHONY_REPO_REF\" \\");
+  lines.push("      # --dissociate copies borrowed objects in so the workspace doesn't");
+  lines.push("      # depend on the bare cache being kept around past clone time.");
+  lines.push("      git clone --reference \"$SYMPHONY_REPO_REF\" --dissociate \\");
   lines.push("        \"https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git\" . \\");
   lines.push("        || git clone \"https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git\" .");
   lines.push("    else");

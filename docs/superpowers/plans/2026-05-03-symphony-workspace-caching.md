@@ -626,6 +626,19 @@ EOF
 **Branch:** `feat/workspace-refs`
 **Outcome:** Symphony manages `~/.symphony-refs/<repoId>.git` per host. The wizard's `after_create` template uses `git clone --reference`. New config keys `workspace.cache.strategy` and `workspace.cache.recipe_ttl_hours` parse and validate. Daemons running an old workflow file see no behavior change (graceful degrade).
 
+> **AMENDMENT 2026-05-03 (read before starting M2):**
+>
+> 1. **Existing API shape vs. plan samples:** The current `WorkspaceManager.prepare()` takes `{issue: WorkspaceIssueInput, attempt: number | null}` and returns `WorkspaceRef = {key, path}` — not the `{issueId, issueIdentifier, ...}`/`{afterCreateOutput, envSnapshot}` shape illustrated in this milestone's tests. The contract to preserve is: callers pass an issue object with at least `identifier` and (optionally) `repoFullName`; tests assert env-var presence by inspecting captured hook stdout. Implementer should add `afterCreateOutput?: string` and `envSnapshot?: Record<string, string | undefined>` to the return type rather than rewrite the call signature.
+>
+> 2. **No `repoCloneUrl`/`repoNodeId` in the tracker — use derived values:** The current `Issue` type and GitHub Projects normalizer carry `repoFullName` only. Threading two new fields through tracker → orchestrator → manager is out of scope for M2. Instead:
+>     - Bare-clone repoId is `sanitize(issue.repoFullName)` (same `[^A-Za-z0-9._-]` → `_` rule used for workspace keys).
+>     - Clone URL inside `ensureBareClone` is constructed by the WorkspaceManager: `https://x-access-token:${GITHUB_TOKEN}@github.com/${repoFullName}.git`. The token is read from `process.env.GITHUB_TOKEN`. Tests pass a local-path upstream as `repoFullName` and skip the URL construction (the manager should accept either a fullName or an absolute path).
+>     - Trade-off: renaming the upstream repo invalidates the cache (the new fullName produces a different repoId). Acceptable for v0; revisit with real GitHub node IDs in v1.
+>
+> 3. **Hook stdout capture:** Current `runHook` uses `execAsync` which already returns `{stdout, stderr}` — just propagate that into the prepare-result so tests can introspect.
+>
+> 4. **`scripts/init.mjs` has stashed unrelated work** in the user's session. M2's Task 2.11 modifies the canned `renderWorkflow` `after_create` block. Apply the change against the **current `main` version** of `scripts/init.mjs` only; do not unstash. The user will manually merge the stashed changes after all milestones complete.
+
 ### Task 2.0: Branch from main (after M1 merges)
 
 - [ ] **Step 1: Fresh branch off main**

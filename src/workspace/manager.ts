@@ -38,6 +38,7 @@ export interface WorkspaceManagerOptions {
   cache?: WorkspaceCacheOptions;
   cacheDir?: string;
   refsOptions?: RefsOptions;
+  githubToken?: string;
 }
 
 export interface WorkspaceRef {
@@ -63,6 +64,7 @@ export class WorkspaceManager {
   private readonly cache: WorkspaceCacheOptions;
   private readonly cacheDir: string;
   private readonly refsOptions: RefsOptions;
+  private readonly githubToken: string | undefined;
 
   constructor(options: WorkspaceManagerOptions) {
     this.root = resolve(options.root);
@@ -76,6 +78,7 @@ export class WorkspaceManager {
     this.cache = options.cache ?? DEFAULT_CACHE;
     this.cacheDir = options.cacheDir ?? join(homedir(), ".symphony-cache");
     this.refsOptions = options.refsOptions ?? {};
+    this.githubToken = options.githubToken;
   }
 
   async prepare(input: { issue: WorkspaceIssueInput; attempt: number | null }): Promise<WorkspaceRef> {
@@ -155,7 +158,7 @@ export class WorkspaceManager {
     if (this.cache.strategy === "none") return env;
     if (!issue.repoFullName) return env;
     const isPath = isAbsolute(issue.repoFullName);
-    const token = process.env.GITHUB_TOKEN;
+    const token = this.githubToken ?? process.env.GITHUB_TOKEN;
     if (!isPath && !token) {
       log.warn(
         { issue_id: issue.id, issue_identifier: issue.identifier, repo: issue.repoFullName },

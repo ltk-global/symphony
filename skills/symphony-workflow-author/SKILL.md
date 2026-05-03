@@ -90,7 +90,9 @@ hooks:
     set -euo pipefail
     if [ -z "${ISSUE_REPO_FULL_NAME:-}" ]; then exit 0; fi
     if [ -n "${SYMPHONY_REPO_REF:-}" ] && [ -d "$SYMPHONY_REPO_REF" ]; then
-      git clone --reference "$SYMPHONY_REPO_REF" \
+      # --dissociate copies borrowed objects in so the workspace doesn't
+      # depend on the bare cache being kept around past clone time.
+      git clone --reference "$SYMPHONY_REPO_REF" --dissociate \
         "https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git" . \
         || git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git" .
     else

@@ -2,6 +2,7 @@ import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { defaultDataDir } from "../observability/data_dir.js";
+import type { WorkspaceCacheStrategy } from "../workspace/manager.js";
 
 const rawSchema = z
   .object({
@@ -42,7 +43,7 @@ export interface ServiceConfig {
   workspace: {
     root: string;
     cache: {
-      strategy: "llm" | "reference_only" | "none";
+      strategy: WorkspaceCacheStrategy;
       reviewRequired: boolean;
       recipeTtlHours: number;
     };
@@ -219,7 +220,7 @@ export function buildConfig(
 function parseWorkspaceCache(raw: unknown): ServiceConfig["workspace"]["cache"] {
   const record = (raw && typeof raw === "object" && !Array.isArray(raw)) ? (raw as Record<string, unknown>) : {};
   const strategyRaw = record.strategy;
-  let strategy: "llm" | "reference_only" | "none" = "llm";
+  let strategy: WorkspaceCacheStrategy = "llm";
   if (strategyRaw !== undefined && strategyRaw !== null) {
     if (strategyRaw === "llm" || strategyRaw === "reference_only" || strategyRaw === "none") {
       strategy = strategyRaw;
