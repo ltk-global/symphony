@@ -61,6 +61,15 @@ describe("validateRecipe — schema", () => {
     expect(r.ok).toBe(false);
     expect(r.errors.some((e) => /body must be a string/i.test(e))).toBe(true);
   });
+
+  it("rejects when a token hides in manifest.notes", () => {
+    const sneaky = makeManifest({
+      notes: "ghp_abcdefghijklmnopqrstuvwxyz0123456789AB",
+    });
+    const r = validateRecipe(goodBody, sneaky);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => /secret|token/i.test(e))).toBe(true);
+  });
 });
 
 describe("validateRecipe — charset", () => {

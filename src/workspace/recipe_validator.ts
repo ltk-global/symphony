@@ -132,9 +132,13 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
     }
   }
 
-  // Secret-scan layer
+  // Secret-scan layer — applied to body AND manifest text. Both are
+  // persisted artifacts; a token in `manifest.notes` is just as bad.
+  const manifestText = (() => {
+    try { return JSON.stringify(manifest); } catch { return ""; }
+  })();
   for (const s of SECRET_PATTERNS) {
-    if (s.pattern.test(body)) {
+    if (s.pattern.test(body) || s.pattern.test(manifestText)) {
       errors.push(`secret-scan: ${s.name} detected — never inline tokens`);
     }
   }
