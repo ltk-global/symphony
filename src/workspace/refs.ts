@@ -16,7 +16,19 @@ export interface RefsOptions {
 }
 
 const LOCK_RETRY_MS = 50;
-const LOCK_TIMEOUT_MS = 30_000;
+// Long enough to wait out a cold initial bare clone of a large repo
+// (tryClone's own timeout is 10 min). Shorter and concurrent prepares of
+// the same uncached repo would give up here, defeating the cache.
+const LOCK_TIMEOUT_MS = 900_000;
+
+function redactAuth(text: string): string {
+  return text.replace(/Authorization: Bearer [^\s'"]+/g, "Authorization: Bearer ***REDACTED***");
+}
+
+function gitErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  return redactAuth(raw);
+}
 
 function refsRoot(opts: RefsOptions = {}): string {
   if (opts.cacheRoot && opts.cacheRoot.length > 0) return resolve(opts.cacheRoot);
@@ -88,8 +100,7 @@ async function tryClone(cloneUrl: string, destPath: string, authHeader: string |
       { timeout: 30_000 },
     );
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`bare_clone_failed:${msg}`);
+    throw new Error(`bare_clone_failed:${gitErrorMessage(err)}`);
   }
 }
 
