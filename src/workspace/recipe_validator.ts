@@ -30,6 +30,10 @@ const REQUIRED_MANIFEST_KEYS = [
 
 const MAX_BODY_BYTES = 8 * 1024;
 const MAX_MANIFEST_BYTES = 4 * 1024;
+// Must match the cap in `computeInputHash` (recipes.ts and
+// workspace-bootstrap.mjs). Manifests beyond this size silently drop
+// entries from the hash; reject them here so validation matches behavior.
+const MAX_MANIFEST_FILES = 64;
 
 const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   // {36,} (not exact {36}) catches both real PATs and longer accidental
@@ -114,6 +118,12 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   // Block redirects to home — `> ~/.npmrc`, `>> $HOME/.bashrc`, etc.
   // would mutate the runner's persistent user environment.
   { pattern: />>?\s*["']?(~|\$\{?HOME\b)/i, label: "home-write" },
+  // Chained shell var assignments enabling indirect command expansion:
+  // `c=curl; b=bash; $c | $b` would run as `curl | bash` but no other rule
+  // matches the literal text. We don't try to track all expansion forms;
+  // reject the chain shape, which has no legitimate use in a bootstrap
+  // recipe.
+  { pattern: /\b[A-Za-z_]\w*=\S+\s*;\s*[A-Za-z_]\w*=/, label: "chained-var-assignments" },
   // Block attempts to relax the forced `set -euo pipefail` preamble.
   // `set +e` / `set +o errexit` etc. would let a failed install be
   // silently ignored while `exit 0` still runs.
@@ -161,6 +171,8 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
       if (v !== undefined) {
         if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) {
           errors.push(`manifest.${k} must be string[]`);
+        } else if (v.length > MAX_MANIFEST_FILES) {
+          errors.push(`manifest.${k} exceeds ${MAX_MANIFEST_FILES} entries (cap matches computeInputHash)`);
         } else if (!v.every(isSafeRelativePath)) {
           errors.push(`manifest.${k} entries must be safe relative paths (no leading /, no ..)`);
         }
