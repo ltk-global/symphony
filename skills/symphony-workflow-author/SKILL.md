@@ -99,10 +99,14 @@ hooks:
       git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git" .
     fi
     git checkout -B "${ISSUE_BRANCH_NAME:-symphony/${ISSUE_WORKSPACE_KEY}}"
-    # Source the LLM-authored install recipe if Symphony has one cached
-    # for this repo and it's not flagged for review.
+  # before_run sources the cached recipe on every dispatch (including
+  # workspace reuse where after_create no-ops). SYMPHONY_RECIPE is set
+  # by Symphony AFTER after_create completes, so sourcing must happen
+  # in a hook that fires after the recipe-provider step.
+  before_run: |
+    set -euo pipefail
     if [ -n "${SYMPHONY_RECIPE:-}" ] && [ -z "${SYMPHONY_RECIPE_DISABLED:-}" ] && [ -f "$SYMPHONY_RECIPE" ]; then
-      source "$SYMPHONY_RECIPE"
+      WORKSPACE="$ISSUE_WORKSPACE_PATH" source "$SYMPHONY_RECIPE"
     fi
 ```
 

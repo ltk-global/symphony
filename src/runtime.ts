@@ -116,8 +116,9 @@ export async function buildRuntimeComponents(workflowPath: string, env: NodeJS.P
   // match — otherwise hooks export one path while the provider stores
   // recipes under another. SYMPHONY_CACHE_DIR is the operator override
   // (also used by `symphony recipe …`); falls back to undefined so
-  // both sides take their default `~/.symphony-cache`.
-  const cacheRootOverride = process.env.SYMPHONY_CACHE_DIR;
+  // both sides take their default `~/.symphony-cache`. Read from the
+  // injected `env` object (callers may pass a custom env).
+  const cacheRootOverride = env.SYMPHONY_CACHE_DIR;
   const recipeProvider: WorkspaceRecipeProvider | undefined =
     config.workspace.cache.strategy === "llm"
       ? new LlmRecipeProvider({

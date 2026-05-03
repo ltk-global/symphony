@@ -364,7 +364,7 @@ async function main() {
         warn("No primary repo detected on the project — daemon will bootstrap lazily on first dispatch.");
       } else {
         ok(`primary repo: ${probed.repoFullName} (id: ${probed.repoId.slice(0, 12)}…)`);
-        await eagerBootstrapRecipe(probed.repoFullName, probed.repoId, token);
+        await eagerBootstrapRecipe(probed.repoFullName, token);
       }
     } catch (error) {
       warn(`eager bootstrap skipped: ${error instanceof Error ? error.message : error}`);
@@ -788,7 +788,7 @@ async function probePrimaryRepo(token, projectId) {
 // Shallow-clone the repo to a tmp dir, invoke the LLM-authored recipe path,
 // persist into ~/.symphony-cache via LlmRecipeProvider. All errors caught;
 // result is logged but the wizard continues.
-async function eagerBootstrapRecipe(repoFullName, repoId, token) {
+async function eagerBootstrapRecipe(repoFullName, token) {
   let tmp = null;
   try {
     tmp = mkdtempSync(join(tmpdir(), "sym-bs-"));
@@ -806,20 +806,21 @@ async function eagerBootstrapRecipe(repoFullName, repoId, token) {
     execFileSync("git", args, { stdio: ["ignore", "ignore", "pipe"] });
     ok(`cloned to ${tmp}`);
 
-    info("authoring recipe via LLM skill (this may take ~30-90s)…");
-    const result = await authorRecipe({
-      context: { repoId, repoFullName },
-      repoCheckoutDir: tmp,
-    });
-    if (result.fallback) {
-      warn(`LLM unavailable or recipe rejected — daemon will use canned template (reason: ${result.reason}).`);
-      return;
-    }
-    // Persist via the same provider the daemon uses, so the file layout +
-    // preamble stay consistent.
+    // Hand the LLM call to LlmRecipeProvider as a lazy author callback —
+    // ensureRecipe checks the on-disk cache first and only invokes the
+    // author on miss/drift. Saves the 30-90s LLM round-trip when re-running
+    // init for a repo that already has a fresh recipe.
     const { LlmRecipeProvider } = await import("../dist/src/workspace/recipes.js");
     const provider = new LlmRecipeProvider({
-      author: async () => result, // already-computed; provider reuses the value
+      cacheRoot: process.env.SYMPHONY_CACHE_DIR, // honor operator override
+      author: async (input) => {
+        info("authoring recipe via LLM skill (this may take ~30-90s)…");
+        const r = await authorRecipe({
+          context: input.context,
+          repoCheckoutDir: input.repoCheckoutDir,
+        });
+        return r;
+      },
       reviewRequired: false,
     });
     // Use repoFullName as the cache key — must match what
@@ -827,7 +828,11 @@ async function eagerBootstrapRecipe(repoFullName, repoId, token) {
     // the GitHub node ID here would store under a stem the daemon never
     // looks up, missing the warm-cache path).
     const persisted = await provider.ensureRecipe({ repoId: repoFullName, repoFullName, repoCheckoutDir: tmp });
-    ok(`recipe written to ${persisted.recipePath}`);
+    if (persisted.generated) {
+      ok(`recipe written to ${persisted.recipePath}`);
+    } else {
+      ok(`existing recipe reused (no LLM call): ${persisted.recipePath}`);
+    }
   } catch (error) {
     // execFileSync surfaces the full argv (including http.extraHeader=Bearer
     // <token>) in error.message. Redact before logging.
