@@ -48,12 +48,13 @@ const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
 ];
 
 const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
-  // Allow optional bash-style command-local var assignments
-  // (`BASH_ENV=/tmp/x bash`), optional path-prefixed env wrapper with
-  // arbitrary args, and optional path-prefix + surrounding quotes around
-  // the shell name. The reluctant `\S+` repeat anchors the shell name at
-  // the end of env args. Bash strips quotes; the variants are equivalent.
-  { pattern: /\b(curl|wget|fetch)\b[^\n]*\|\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:(?:[^\s|]*\/)?env(?:\s+\S+)*?\s+)?["']?(?:[^\s|"']*\/)?(bash|sh|zsh)["']?\b/i, label: "pipe-to-shell" },
+  // Loose match: any `bash|sh|zsh` invocation on the same line as a
+  // curl/wget/fetch pipe is suspicious. Wrappers (`time bash`,
+  // `nohup bash`, `command bash`, env vars, path-prefixes, quotes) all
+  // collapse into "bash exists in the pipeline". Over-detection is
+  // preferred to under-detection here; benign `curl … | grep bash` is
+  // vanishingly rare in a workspace-bootstrap recipe.
+  { pattern: /\b(curl|wget|fetch)\b[^\n]*\|[^\n]*\b(bash|sh|zsh)\b/i, label: "pipe-to-shell" },
   // Catch backtick command substitution (`eval \`...\``) as well as the
   // quote-/`$`-prefixed forms.
   { pattern: /\beval\s+["'$`]/, label: "eval-of-dynamic-input" },
@@ -69,10 +70,11 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   // unflagged `rm $HOME` are all destructive. Any `rm` invocation whose
   // operands include a destructive target is rejected.
   { pattern: /\brm\b[^\n;&|]*\s(--\s+)?["']?(\/+|~|\$\{?HOME\b|\.\.\/)/i, label: "destructive-rm" },
-  // Any `..` traversal anywhere in an rm command's operand list — catches
-  // `rm -rf "$WORKSPACE/../sibling"` even though `$WORKSPACE` is allowed
-  // for the leading-target rule above.
-  { pattern: /\brm\b[^\n;&|]*\.\.\//i, label: "destructive-rm-traversal" },
+  // Any `..` segment anywhere in an rm command's operand list — catches
+  // `rm -rf "$WORKSPACE/../sibling"`, terminal `rm -rf $WORKSPACE/..`, and
+  // bare `rm -rf ..`. The lookahead requires `..` to be followed by a path
+  // separator, whitespace, quote, statement separator, or end of input.
+  { pattern: /\brm\b[^\n;&|]*\.\.(?=[/\s"';|&]|$)/i, label: "destructive-rm-traversal" },
   // `\bsu\s+-\b` doesn't work — `-` is non-word so `\b` after it requires
   // a word char immediately, which fails for the common `su - root` form.
   // Drop the trailing boundary on the `su -` branch.
@@ -85,6 +87,9 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\bcrontab\s+-/i, label: "crontab" },
   { pattern: /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:/i, label: "fork-bomb" },
   { pattern: />>?\s*\/etc\//i, label: "/etc/-write" },
+  // Block redirects to home — `> ~/.npmrc`, `>> $HOME/.bashrc`, etc.
+  // would mutate the runner's persistent user environment.
+  { pattern: />>?\s*["']?(~|\$\{?HOME\b)/i, label: "home-write" },
 ];
 
 export function validateRecipe(body: unknown, manifest: RecipeManifest): ValidationResult {
