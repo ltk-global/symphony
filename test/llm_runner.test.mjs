@@ -1,6 +1,18 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 import { runSkill, LlmUnavailableError } from "../scripts/lib/llm-runner.mjs";
+
+// pickRunner reads SYMPHONY_LLM_RUNNER on every call; clear it for each test
+// so a developer/CI shell setting doesn't override the explicit `runner` arg.
+let savedRunnerEnv;
+beforeEach(() => {
+  savedRunnerEnv = process.env.SYMPHONY_LLM_RUNNER;
+  delete process.env.SYMPHONY_LLM_RUNNER;
+});
+afterEach(() => {
+  if (savedRunnerEnv === undefined) delete process.env.SYMPHONY_LLM_RUNNER;
+  else process.env.SYMPHONY_LLM_RUNNER = savedRunnerEnv;
+});
 
 function fakeChild({ stdoutChunks = [], exitCode = 0 } = {}) {
   const child = new EventEmitter();
@@ -26,13 +38,13 @@ describe("runSkill — claude path", () => {
       skill: "SKILL CONTENT",
       message: "hello",
       runner: "claude",
-      claudeCommand: "claude",
+      claudeCommand: "sh",
       spawnImpl,
       timeoutMs: 5000,
     });
     expect(out).toBe("the result");
     expect(calls).toHaveLength(1);
-    expect(calls[0].cmd).toBe("claude");
+    expect(calls[0].cmd).toBe("sh");
     expect(calls[0].args).toContain("--print");
     expect(calls[0].args).toContain("--input-format");
     expect(calls[0].args).toContain("text");
@@ -60,12 +72,12 @@ describe("runSkill — codex path", () => {
       skill: "S",
       message: "m",
       runner: "codex",
-      codexCommand: "codex",
+      codexCommand: "sh",
       spawnImpl,
       timeoutMs: 5000,
     });
     expect(out).toBe("codex result");
-    expect(calls[0].cmd).toBe("codex");
+    expect(calls[0].cmd).toBe("sh");
     expect(calls[0].args).toEqual(expect.arrayContaining([
       "exec", "--sandbox", "read-only",
       "--ask-for-approval", "never",

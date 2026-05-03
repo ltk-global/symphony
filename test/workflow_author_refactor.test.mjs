@@ -1,6 +1,16 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { authorWorkflow } from "../scripts/lib/workflow-author.mjs";
 import { EventEmitter } from "node:events";
+
+let savedRunnerEnv;
+beforeEach(() => {
+  savedRunnerEnv = process.env.SYMPHONY_LLM_RUNNER;
+  delete process.env.SYMPHONY_LLM_RUNNER;
+});
+afterEach(() => {
+  if (savedRunnerEnv === undefined) delete process.env.SYMPHONY_LLM_RUNNER;
+  else process.env.SYMPHONY_LLM_RUNNER = savedRunnerEnv;
+});
 
 const FIXED_LLM_OUTPUT = `---
 tracker:
@@ -80,7 +90,7 @@ describe("workflow-author post-llm-runner refactor", () => {
       workspaceRoot: "~/symphony_workspaces/test",
       slack: null,
     };
-    const result = await authorWorkflow({ context, description: "", spawnImpl: fakeSpawn() });
+    const result = await authorWorkflow({ context, description: "", claudeCommand: "sh", spawnImpl: fakeSpawn() });
     expect(result.source).toBe(FIXED_LLM_OUTPUT);
     expect(result.fallback).toBe(false);
   });

@@ -97,6 +97,12 @@ Expected: both binaries present, codex >= 0.128 (per the codex research). If onl
 **Branch:** `feat/llm-runner`
 **Outcome:** `workflow-author.mjs` produces byte-identical output before/after via the new `runSkill` abstraction. Codex path tested with stub; real codex round-trip verified manually.
 
+> **AMENDMENT 2026-05-03 (during M1 implementation):** While running `/codex-review` against codex CLI 0.128.0 we discovered two errors in this milestone's sample code:
+> 1. `--ask-for-approval` (and the `-a` short form) is a **top-level** codex flag — it must precede `exec` in argv, not follow it.
+> 2. `codex exec` does not accept `--add-dir`. The `--sandbox read-only` policy already permits disk-wide reads, so the inspection target (repo path) is conveyed via the prompt body.
+>
+> Both Task 1.2's `runCodex` and Task 1.3's argv assertion sample have been updated. Tests should pass `claudeCommand: "sh"` / `codexCommand: "sh"` (rather than `"claude"`/`"codex"`) so the suite is not environment-dependent on an LLM CLI being installed. SPEC §LLM-runner sandboxing has been amended in lockstep.
+
 ### Task 1.0: Branch
 
 - [ ] **Step 1: Create branch**
@@ -232,16 +238,20 @@ function runClaude({ skill, message, readOnlyDir, claudeCommand, spawner, timeou
   return spawnAndCollect(spawner, claudeCommand, args, message, timeoutMs);
 }
 
-async function runCodex({ skill, message, readOnlyDir, codexCommand, spawner, timeoutMs }) {
+// AMENDED 2026-05-03 (codex 0.128.0 verification): `--ask-for-approval` is a
+// top-level codex flag (must precede `exec`); `codex exec` does not accept
+// `--add-dir`. `--sandbox read-only` already grants disk-wide read, so the
+// repo path is conveyed via the prompt body. `readOnlyDir` is therefore unused
+// by runCodex's argv.
+async function runCodex({ skill, message, codexCommand, spawner, timeoutMs }) {
   const dir = await mkdtemp(join(tmpdir(), "symphony-codex-"));
-  await writeFile(join(dir, "AGENTS.md"), skill, { mode: 0o600 });
   try {
+    await writeFile(join(dir, "AGENTS.md"), skill, { mode: 0o600 });
     const args = [
+      "--ask-for-approval", "never",
       "exec",
       "--sandbox", "read-only",
-      "--ask-for-approval", "never",
-      "--cd", readOnlyDir ?? dir,
-      "--add-dir", dir,
+      "--cd", dir,
       "--skip-git-repo-check",
       "--color", "never",
       "-c", "project_doc_max_bytes=262144",

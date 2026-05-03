@@ -388,12 +388,14 @@ Patterns live in `config/recipe-blocklist.yml`, extensible without code change.
 
 | Aspect | Claude path | Codex path |
 |---|---|---|
-| Spawn | `claude --print --input-format text --append-system-prompt <skill>` | `codex exec --sandbox read-only -a never --cd <tmpdir> --skip-git-repo-check --color never -c project_doc_max_bytes=262144` |
+| Spawn | `claude --print --input-format text --append-system-prompt <skill>` | `codex --ask-for-approval never exec --sandbox read-only --cd <tmpdir> --skip-git-repo-check --color never -c project_doc_max_bytes=262144 -` |
 | Skill injection | `--append-system-prompt` flag | write to `<tmpdir>/AGENTS.md`, `--cd <tmpdir>` |
-| Read scope | `--allowed-tools Read,Glob,Grep --add-dir <repoDir>` | `--add-dir <repoDir>` (sandbox locks rest down) |
+| Read scope | `--allowed-tools Read,Glob,Grep --add-dir <repoDir>` | `--sandbox read-only` (already grants disk-wide read; the repo path is conveyed via the prompt body) |
 | Network access | none requested | `--sandbox read-only` blocks |
 | Timeout | 120s default | 120s default |
 | Result handling | parse stdout JSON | parse stdout (or `--output-last-message <file>`) |
+
+> **Codex CLI 0.128.0 reality-check (M1, 2026-05-03):** `--ask-for-approval` (and `-a`) is a **top-level** codex flag — not an `exec` option — so it must precede `exec` in argv. `codex exec` does not accept `--add-dir`; the read-only sandbox already permits broad disk reads, and the prompt body carries the inspection target. Confirmed empirically by spawning the implementation against `/opt/homebrew/bin/codex` 0.128.0.
 
 The repo checkout the LLM inspects is a **shallow clone with `--depth 1` to a
 tmp dir, deleted on bootstrap return**. `mkdtemp` (random name, mode 0700).

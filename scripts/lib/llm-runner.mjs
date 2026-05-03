@@ -29,7 +29,7 @@ export async function runSkill({
   if (chosen === "claude") {
     return await runClaude({ skill, message, readOnlyDir, claudeCommand, spawner, timeoutMs });
   }
-  return await runCodex({ skill, message, readOnlyDir, codexCommand, spawner, timeoutMs });
+  return await runCodex({ skill, message, codexCommand, spawner, timeoutMs });
 }
 
 function pickRunner(runner, { claudeCommand, codexCommand }) {
@@ -43,9 +43,14 @@ function pickRunner(runner, { claudeCommand, codexCommand }) {
   return null;
 }
 
+const onPathCache = new Map();
 function onPath(bin) {
-  try { execFileSync("which", [bin], { stdio: "ignore" }); return true; }
-  catch { return false; }
+  if (onPathCache.has(bin)) return onPathCache.get(bin);
+  let ok;
+  try { execFileSync("which", [bin], { stdio: "ignore" }); ok = true; }
+  catch { ok = false; }
+  onPathCache.set(bin, ok);
+  return ok;
 }
 
 function runClaude({ skill, message, readOnlyDir, claudeCommand, spawner, timeoutMs }) {
@@ -56,16 +61,18 @@ function runClaude({ skill, message, readOnlyDir, claudeCommand, spawner, timeou
   return spawnAndCollect(spawner, claudeCommand, args, message, timeoutMs);
 }
 
-async function runCodex({ skill, message, readOnlyDir, codexCommand, spawner, timeoutMs }) {
+async function runCodex({ skill, message, codexCommand, spawner, timeoutMs }) {
   const dir = await mkdtemp(join(tmpdir(), "symphony-codex-"));
   try {
     await writeFile(join(dir, "AGENTS.md"), skill, { mode: 0o600 });
+    // --ask-for-approval is a top-level codex flag (not exec-level); --add-dir
+    // doesn't exist in codex exec — sandbox read-only already grants broad read.
+    // The prompt body (message) carries the path of any repo we want inspected.
     const args = [
+      "--ask-for-approval", "never",
       "exec",
       "--sandbox", "read-only",
-      "--ask-for-approval", "never",
-      "--cd", readOnlyDir ?? dir,
-      "--add-dir", dir,
+      "--cd", dir,
       "--skip-git-repo-check",
       "--color", "never",
       "-c", "project_doc_max_bytes=262144",
