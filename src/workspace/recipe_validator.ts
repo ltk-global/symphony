@@ -47,12 +47,17 @@ const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
 
 const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\b(curl|wget|fetch)\b[^\n]*\|\s*(bash|sh|zsh)\b/i, label: "pipe-to-shell" },
-  { pattern: /\beval\s+["'$]/, label: "eval-of-dynamic-input" },
+  // Catch backtick command substitution (`eval \`...\``) as well as the
+  // quote-/`$`-prefixed forms.
+  { pattern: /\beval\s+["'$`]/, label: "eval-of-dynamic-input" },
   // Targets: `/`-rooted, `~` (with or without `/`), `$HOME`/`${HOME}`, or
-  // any `../` parent-relative path (recipes run in $WORKSPACE — `..` escapes).
-  // Optional opening quote and `--` separator catch quoted/separator forms.
-  // `$WORKSPACE` is allowed (no branch starts with it).
-  { pattern: /rm\s+-[a-z]*r[a-z]*f?\s+(--\s+)?["']?(\/+|~|\$\{?HOME\b|\.\.\/)/i, label: "destructive-rm" },
+  // `../` parent-relative (recipes run in $WORKSPACE — `..` escapes). The
+  // `[^\n;&|]*\s` lookbehind allows any number of intermediate operands so
+  // `rm -rf node_modules /` or `rm -rf build ../sibling` are still caught
+  // (bash would delete every operand). `$WORKSPACE` is the only $-prefixed
+  // path allowed; no branch starts with it. Optional `--` separator and
+  // opening quote handle `rm -rf -- "/"` etc.
+  { pattern: /rm\s+-[a-z]*r[a-z]*f?\b[^\n;&|]*\s(--\s+)?["']?(\/+|~|\$\{?HOME\b|\.\.\/)/i, label: "destructive-rm" },
   { pattern: /\b(sudo|doas|su\s+-)\b/i, label: "sudo" },
   { pattern: /\b(systemctl|launchctl|service)\s+(start|stop|restart|disable|enable|reload)\b/i, label: "system-service" },
   { pattern: /\b(ssh|scp|rsync)\s+[^\n]*@/i, label: "ssh-out" },
