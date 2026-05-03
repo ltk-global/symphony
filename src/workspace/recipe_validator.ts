@@ -48,16 +48,15 @@ const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
 ];
 
 const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
-  // Loose match: any `bash|sh|zsh` invocation on the same line as a
-  // curl/wget/fetch pipe is suspicious. Wrappers (`time bash`,
-  // `nohup bash`, `command bash`, env vars, path-prefixes, quotes) all
-  // collapse into "bash exists in the pipeline". Over-detection is
-  // preferred to under-detection here; benign `curl … | grep bash` is
-  // vanishingly rare in a workspace-bootstrap recipe.
-  { pattern: /\b(curl|wget|fetch)\b[^\n]*\|[^\n]*\b(bash|sh|zsh)\b/i, label: "pipe-to-shell" },
-  // Process substitution: `bash <(curl …)` and `sh < <(wget …)` are
-  // remote-code-execution forms equivalent to pipe-to-shell.
-  { pattern: /\b(bash|sh|zsh)\b[^\n]*<\s*\(?\s*(curl|wget|fetch)\b/i, label: "process-substitution-to-shell" },
+  // Loose match: any `bash|sh|zsh|$SHELL` invocation on the same line as
+  // a curl/wget/fetch pipe is suspicious. Wrappers (`time bash`, env
+  // vars, path-prefixes, quotes) all collapse into "shell exists in the
+  // pipeline". Over-detection is preferred to under-detection.
+  { pattern: /\b(curl|wget|fetch)\b[^\n]*\|[^\n]*(\b(bash|sh|zsh)\b|\$\{?SHELL\b)/i, label: "pipe-to-shell" },
+  // Process substitution + source/exec: `bash <(curl …)`,
+  // `source <(curl …)`, `. <(wget …)`, `exec < <(curl …)` — all remote-code
+  // execution shapes equivalent to pipe-to-shell.
+  { pattern: /(?:\b(bash|sh|zsh|source|exec)\b|(?:^|[\s;&|])\.)[^\n]*<\s*\(?\s*(curl|wget|fetch)\b/i, label: "process-substitution-to-shell" },
   // `bash -c "$(curl …)"`, `bash -lc "$(…)"`, `bash <<< "$(curl …)"` —
   // same RCE shape as pipe-to-shell. Allow any short-flag bundle that
   // contains `c` (sh -c, bash -lc, bash -Cl) and bash here-strings.
@@ -90,9 +89,11 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   // — both shapes covered, including leading flags like `systemctl --user
   // start foo`. The `[^\n;&|]*\s` between cmd and action allows any flags.
   { pattern: /\b(systemctl|launchctl)\b[^\n;&|]*\s(start|stop|restart|disable|enable|reload|reload-or-restart)\b|\bservice\s+\S+\s+(start|stop|restart|reload|reload-or-restart)\b/i, label: "system-service" },
-  // ssh/scp/rsync to a remote — covers user@host AND host:path forms (scp's
-  // default-user syntax is `host:path`; we forbid ALL outbound transfers).
-  { pattern: /\b(ssh|scp|rsync)\s+[^\n]*[:@]/i, label: "ssh-out" },
+  // ssh/scp/rsync to a remote — match ANY invocation. The skill forbids
+  // these outright; default-user `ssh github.com` and `scp host:/path` need
+  // to be caught regardless of `:`/`@`. `ssh-keygen` doesn't match because
+  // `\bssh\s+` requires whitespace after `ssh`, but `ssh-keygen` has `-`.
+  { pattern: /\b(ssh|scp|rsync)\s+\S/i, label: "ssh-out" },
   { pattern: /\bcrontab\s+-/i, label: "crontab" },
   { pattern: /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:/i, label: "fork-bomb" },
   { pattern: />>?\s*\/etc\//i, label: "/etc/-write" },
