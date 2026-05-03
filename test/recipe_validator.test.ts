@@ -55,6 +55,12 @@ describe("validateRecipe — schema", () => {
     expect(r.ok).toBe(false);
     expect(r.errors.some((e) => /lfs.*boolean/i.test(e))).toBe(true);
   });
+
+  it("rejects non-string body without throwing", () => {
+    const r = validateRecipe(undefined as any, goodManifest);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => /body must be a string/i.test(e))).toBe(true);
+  });
 });
 
 describe("validateRecipe — charset", () => {
@@ -84,8 +90,11 @@ const BLOCKLIST_CASES: Array<[string, RegExp | null, string]> = [
   ["rm -rf \"/\"", /destructive/i, "rm -rf quoted root"],
   ["rm -rf \"$HOME\"", /destructive/i, "rm -rf quoted $HOME"],
   ["rm -rf '${HOME}/foo'", /destructive/i, "rm -rf single-quoted ${HOME}"],
+  ["rm -rf -- /", /destructive/i, "rm -rf -- separator"],
+  ["rm -rf -- \"$HOME\"", /destructive/i, "rm -rf -- quoted $HOME"],
   ["rm -rf $WORKSPACE/build", null, "WORKSPACE allowed"],
   ["rm -rf node_modules", null, "relative path benign"],
+  ["git clone https://user:hunter2@example.com/repo.git .", /credential|secret|token/i, "credential URL"],
   ["sudo apt update", /sudo/i, "sudo"],
   ["systemctl restart something", /system/i, "systemctl"],
   ["ssh user@host 'cmd'", /ssh/i, "ssh out"],

@@ -40,6 +40,9 @@ const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   // doesn't false-positive.
   { name: "slack-token", pattern: /\bxox[baprs]-[A-Za-z0-9]+-[A-Za-z0-9]+-[A-Za-z0-9-]+/ },
   { name: "iris-token", pattern: /\bswm_[A-Za-z0-9]{20,}\b/ },
+  // SKILL.md explicitly forbids hardcoded credential URLs; catch the
+  // generic `https://user:secret@host/…` shape regardless of token format.
+  { name: "credential-url", pattern: /\bhttps?:\/\/[^\s\/:@]+:[^\s\/@]+@/ },
 ];
 
 const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
@@ -47,10 +50,11 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\beval\s+["'$]/, label: "eval-of-dynamic-input" },
   // Allow optional opening quote before the destructive target so
   // `rm -rf "/"`, `rm -rf '$HOME'`, etc. don't slip past the gate.
+  // Optional `--` separator before the target catches `rm -rf -- /`.
   // Targets: `/`-rooted paths, `~/`, or `$HOME`/`${HOME}`. `$WORKSPACE` is
   // the only env-var prefix that's allowed and naturally excluded since
   // it doesn't start with any of these branches.
-  { pattern: /rm\s+-[a-z]*r[a-z]*f?\s+["']?(\/+|~\/|\$\{?HOME\b)/i, label: "destructive-rm" },
+  { pattern: /rm\s+-[a-z]*r[a-z]*f?\s+(--\s+)?["']?(\/+|~\/|\$\{?HOME\b)/i, label: "destructive-rm" },
   { pattern: /\b(sudo|doas|su\s+-)\b/i, label: "sudo" },
   { pattern: /\b(systemctl|launchctl|service)\s+(start|stop|restart|disable|enable|reload)\b/i, label: "system-service" },
   { pattern: /\b(ssh|scp|rsync)\s+[^\n]*@/i, label: "ssh-out" },
@@ -59,8 +63,12 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   { pattern: />>?\s*\/etc\//i, label: "/etc/-write" },
 ];
 
-export function validateRecipe(body: string, manifest: RecipeManifest): ValidationResult {
+export function validateRecipe(body: unknown, manifest: RecipeManifest): ValidationResult {
   const errors: string[] = [];
+
+  if (typeof body !== "string") {
+    return { ok: false, errors: ["recipe body must be a string"] };
+  }
 
   // Schema layer — keys present, types correct (LLM JSON can't be trusted).
   const m = manifest as unknown as Record<string, unknown> | null | undefined;
