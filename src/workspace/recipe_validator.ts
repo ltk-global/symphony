@@ -55,6 +55,9 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   // preferred to under-detection here; benign `curl … | grep bash` is
   // vanishingly rare in a workspace-bootstrap recipe.
   { pattern: /\b(curl|wget|fetch)\b[^\n]*\|[^\n]*\b(bash|sh|zsh)\b/i, label: "pipe-to-shell" },
+  // Process substitution: `bash <(curl …)` and `sh < <(wget …)` are
+  // remote-code-execution forms equivalent to pipe-to-shell.
+  { pattern: /\b(bash|sh|zsh)\b[^\n]*<\s*\(?\s*(curl|wget|fetch)\b/i, label: "process-substitution-to-shell" },
   // Catch backtick command substitution (`eval \`...\``) as well as the
   // quote-/`$`-prefixed forms.
   { pattern: /\beval\s+["'$`]/, label: "eval-of-dynamic-input" },
