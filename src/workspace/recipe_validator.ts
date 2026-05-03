@@ -58,8 +58,10 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   // Process substitution: `bash <(curl …)` and `sh < <(wget …)` are
   // remote-code-execution forms equivalent to pipe-to-shell.
   { pattern: /\b(bash|sh|zsh)\b[^\n]*<\s*\(?\s*(curl|wget|fetch)\b/i, label: "process-substitution-to-shell" },
-  // `bash -c "$(curl …)"` (and sh/zsh equivalents) — same RCE shape.
-  { pattern: /\b(bash|sh|zsh)\b\s+-c\s+[^\n]*\b(curl|wget|fetch)\b/i, label: "shell-c-remote-fetch" },
+  // `bash -c "$(curl …)"`, `bash -lc "$(…)"`, `bash <<< "$(curl …)"` —
+  // same RCE shape as pipe-to-shell. Allow any short-flag bundle that
+  // contains `c` (sh -c, bash -lc, bash -Cl) and bash here-strings.
+  { pattern: /\b(bash|sh|zsh)\b[^\n]*(?:-[a-zA-Z]*c[a-zA-Z]*\s+|<<<\s*)[^\n]*\b(curl|wget|fetch)\b/i, label: "shell-c-remote-fetch" },
   // Catch backtick command substitution (`eval \`...\``) as well as the
   // quote-/`$`-prefixed forms.
   { pattern: /\beval\s+["'$`]/, label: "eval-of-dynamic-input" },
