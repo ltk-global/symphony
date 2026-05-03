@@ -115,11 +115,13 @@ export class WorkspaceManager {
   }
 
   async beforeRun(workspace: WorkspaceRef, issue: WorkspaceIssueInput, attempt: number | null): Promise<void> {
+    if (!this.hooks.beforeRun.trim()) return;
     const cacheEnv = workspace.cacheEnv ?? await this.computeCacheEnv(issue);
     await this.runHook(this.hooks.beforeRun, workspace.path, issue, workspace.key, attempt, cacheEnv);
   }
 
   async afterRun(workspace: WorkspaceRef, issue: WorkspaceIssueInput, attempt: number | null): Promise<void> {
+    if (!this.hooks.afterRun.trim()) return;
     try {
       const cacheEnv = workspace.cacheEnv ?? await this.computeCacheEnv(issue);
       await this.runHook(this.hooks.afterRun, workspace.path, issue, workspace.key, attempt, cacheEnv);
@@ -130,11 +132,13 @@ export class WorkspaceManager {
   }
 
   async remove(workspace: WorkspaceRef, issue: WorkspaceIssueInput): Promise<void> {
-    try {
-      const cacheEnv = workspace.cacheEnv ?? await this.computeCacheEnv(issue);
-      await this.runHook(this.hooks.beforeRemove, workspace.path, issue, workspace.key, null, cacheEnv);
-    } catch (error) {
-      log.warn({ error, issue_id: issue.id, issue_identifier: issue.identifier }, "before_remove hook failed");
+    if (this.hooks.beforeRemove.trim()) {
+      try {
+        const cacheEnv = workspace.cacheEnv ?? await this.computeCacheEnv(issue);
+        await this.runHook(this.hooks.beforeRemove, workspace.path, issue, workspace.key, null, cacheEnv);
+      } catch (error) {
+        log.warn({ error, issue_id: issue.id, issue_identifier: issue.identifier }, "before_remove hook failed");
+      }
     }
     await rm(workspace.path, { recursive: true, force: true });
   }
