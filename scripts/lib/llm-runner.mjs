@@ -58,8 +58,8 @@ function runClaude({ skill, message, readOnlyDir, claudeCommand, spawner, timeou
 
 async function runCodex({ skill, message, readOnlyDir, codexCommand, spawner, timeoutMs }) {
   const dir = await mkdtemp(join(tmpdir(), "symphony-codex-"));
-  await writeFile(join(dir, "AGENTS.md"), skill, { mode: 0o600 });
   try {
+    await writeFile(join(dir, "AGENTS.md"), skill, { mode: 0o600 });
     const args = [
       "exec",
       "--sandbox", "read-only",
@@ -81,6 +81,7 @@ function spawnAndCollect(spawner, cmd, args, stdin, timeoutMs) {
   return new Promise((resolveOut, rejectOut) => {
     const child = spawner(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "", stderr = "";
+    child.stdin.on?.("error", () => {});
     child.stdin.end(stdin);
     child.stdout.on("data", (b) => { stdout += b.toString(); });
     child.stderr.on("data", (b) => { stderr += b.toString(); });

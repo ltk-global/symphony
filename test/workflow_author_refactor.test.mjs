@@ -47,7 +47,7 @@ iris:
 `;
 
 function fakeSpawn() {
-  return (cmd, args) => {
+  return () => {
     const child = new EventEmitter();
     child.stdin = { end: () => {} };
     child.stdout = new EventEmitter();
