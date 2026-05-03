@@ -162,12 +162,20 @@ export class LlmRecipeProvider {
     } catch {
       return null;
     }
+    // Sanity-check the shape before hashing — a corrupt sidecar
+    // (`inputFiles: 1`) would otherwise crash `[...x].sort()`.
+    if (!isStringArray(manifest?.inputFiles) || !isStringArray(manifest?.discoveryFiles)) {
+      return null;
+    }
+    if (typeof manifest.inputHash !== "string" || typeof manifest.generatedAt !== "string") {
+      return null;
+    }
     // Drift check — recompute over the manifest's declared input + discovery
     // sets. Adding/removing a discoveryFile entry must invalidate the cache.
     const fresh = await computeInputHash(
       input.repoCheckoutDir,
-      manifest.inputFiles ?? [],
-      manifest.discoveryFiles ?? [],
+      manifest.inputFiles,
+      manifest.discoveryFiles,
     );
     if (fresh !== manifest.inputHash) return null;
     // TTL check — invalid `generatedAt` parses to NaN, which fails the gate.
@@ -220,6 +228,10 @@ fi
     await writeFile(p.json, JSON.stringify(manifest, null, 2), { mode: 0o600 });
     return { recipePath: p.sh, manifest, generated: true };
   }
+}
+
+function isStringArray(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every((x) => typeof x === "string");
 }
 
 // LLM-declared inputs are inherently untrusted; cap to bound memory.

@@ -14,7 +14,7 @@ import { readFile, stat, realpath } from "node:fs/promises";
 import { resolve, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { runSkill, LlmUnavailableError } from "./llm-runner.mjs";
+import { runSkill, LlmUnavailableError, whichLlm } from "./llm-runner.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SKILL_PATH = resolve(HERE, "..", "..", "skills", "symphony-workspace-bootstrap", "SKILL.md");
@@ -87,7 +87,9 @@ export async function authorRecipe({
     schema: "symphony.recipe.v1",
     repoId: context.repoId,
     repoFullName: context.repoFullName,
-    generatedBy: process.env.SYMPHONY_LLM_RUNNER || "claude-code",
+    // Record the actual runner (not just "claude-code") so manifests are
+    // honest under runner: "auto" with claude absent + codex available.
+    generatedBy: whichLlm() ?? process.env.SYMPHONY_LLM_RUNNER ?? "claude-code",
     generatedAt: new Date().toISOString(),
     inputHash,
     inputFiles,

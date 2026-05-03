@@ -184,4 +184,29 @@ describe("LlmRecipeProvider", () => {
     expect(existsSync(a.recipePath)).toBe(true);
     expect(existsSync(b.recipePath)).toBe(true);
   });
+
+  it("treats malformed cache sidecars as cache misses (no throw)", async () => {
+    const p = new LlmRecipeProvider({ cacheRoot, author: goodAuthor as any });
+    goodAuthor.mockImplementation(async (input: any) => {
+      const { computeInputHash } = await import("../src/workspace/recipes.js");
+      return {
+        source: "llm",
+        fallback: false,
+        recipe: "npm ci",
+        manifest: {
+          ...baseManifest,
+          inputHash: await computeInputHash(input.repoCheckoutDir, ["package-lock.json"]),
+        },
+      };
+    });
+    const r1 = await p.ensureRecipe({ repoId: "MAL", repoFullName: "x/x", repoCheckoutDir: repo });
+    // Corrupt the sidecar to a valid-JSON-but-wrong-shape blob.
+    const jsonPath = r1.recipePath.replace(/\.sh$/, ".json");
+    writeFileSync(jsonPath, '{"inputFiles":1,"discoveryFiles":2}');
+    goodAuthor.mockClear();
+    // Should not throw on `[...1].sort()` etc.; should re-author.
+    const r2 = await p.ensureRecipe({ repoId: "MAL", repoFullName: "x/x", repoCheckoutDir: repo });
+    expect(r2.generated).toBe(true);
+    expect(goodAuthor).toHaveBeenCalledTimes(1);
+  });
 });
