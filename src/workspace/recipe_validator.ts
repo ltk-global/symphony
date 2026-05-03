@@ -211,11 +211,15 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
   const quotelessBody = body.replace(/\$?['"]/g, "");
   const unescapedBody = body.replace(/\\(.)/g, "$1");
   const combinedBody = quotelessBody.replace(/\\(.)/g, "$1");
-  // Decode `\xNN` ANSI-C hex escapes (`$'\x75'` → `u`) before stripping
-  // quotes, then strip quotes and remove backslash escapes. Without this,
-  // an LLM could spell forbidden words via hex-encoded ANSI-C quoting.
+  // Decode ANSI-C `$'…'` escapes (hex `\xNN`, octal `\NNN`, Unicode
+  // `\uNNNN`/`\UNNNNNNNN`, named `\n`/`\t`/etc.) before stripping quotes
+  // and backslashes. Without this, an LLM could spell forbidden words
+  // via numeric escapes (`r$'\155'` → `rm`, `c$'u'rl` → `curl`).
   const fullyNormalizedBody = joinedBody
     .replace(/\\x([0-9a-fA-F]{2})/g, (_m, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_m, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\U([0-9a-fA-F]{8})/g, (_m, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/\\([0-7]{1,3})/g, (_m, o) => String.fromCharCode(parseInt(o, 8) & 0xff))
     .replace(/\$?['"]/g, "")
     .replace(/\\(.)/g, "$1");
   const views = [body, joinedBody, quotelessBody, unescapedBody, combinedBody, fullyNormalizedBody];
