@@ -136,6 +136,10 @@ export async function buildRuntimeComponents(workflowPath: string, env: NodeJS.P
     cache: config.workspace.cache,
     githubToken: config.tracker.apiToken,
     recipeProvider,
+    // SYMPHONY_REFS_DIR overrides the default ~/.symphony-refs for the
+    // bare-clone cache (kept separate from SYMPHONY_CACHE_DIR by the spec
+    // since they have different lifecycles and storage shapes).
+    refsOptions: env.SYMPHONY_REFS_DIR ? { cacheRoot: env.SYMPHONY_REFS_DIR } : undefined,
   });
   const runner =
     config.agent.kind === "codex"
