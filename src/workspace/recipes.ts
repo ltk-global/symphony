@@ -222,6 +222,11 @@ fi
   }
 }
 
+// LLM-declared inputs are inherently untrusted; cap to bound memory.
+// Lockfiles are typically <100KB; 1MB per file × 64 files is generous.
+const MAX_INPUT_BYTES = 1 * 1024 * 1024;
+const MAX_INPUT_FILES = 64;
+
 // Hash the manifest's declared inputs + discovery set deterministically.
 // MUST stay byte-identical to the matching .mjs copy in
 // `scripts/lib/workspace-bootstrap.mjs` (parity asserted by
@@ -231,14 +236,15 @@ fi
 // inputFiles affect the recipe via content (read + hashed).
 // discoveryFiles affect it via presence only.
 // Both arrays are gated by realpath()-confined-to-rootDir so symlinks
-// can't escape the checkout.
+// can't escape the checkout. Files larger than MAX_INPUT_BYTES fall back to
+// metadata hashing so an LLM emitting `inputFiles: ["huge.bin"]` can't DoS.
 export async function computeInputHash(
   rootDir: string,
   inputFiles: string[],
   discoveryFiles: string[] = [],
 ): Promise<string> {
-  const sortedInputs = [...inputFiles].sort();
-  const sortedDiscovery = [...discoveryFiles].sort();
+  const sortedInputs = [...inputFiles].sort().slice(0, MAX_INPUT_FILES);
+  const sortedDiscovery = [...discoveryFiles].sort().slice(0, MAX_INPUT_FILES);
   const rootReal = await realpath(rootDir).catch(() => null);
   const insideRoot = async (rel: string): Promise<string | null> => {
     if (rootReal === null) return null;
@@ -248,25 +254,37 @@ export async function computeInputHash(
     } catch {}
     return null;
   };
+  type Item =
+    | { rel: string; kind: "buf"; buf: Buffer }
+    | { rel: string; kind: "meta"; meta: string }
+    | { rel: string; kind: "missing" };
   const reads = await Promise.all(
-    sortedInputs.map(async (rel) => {
+    sortedInputs.map(async (rel): Promise<Item> => {
       const safe = await insideRoot(rel);
-      if (safe === null) return { rel, buf: null as Buffer | null };
+      if (safe === null) return { rel, kind: "missing" };
       try {
-        return { rel, buf: await readFile(safe) };
+        const st = await stat(safe);
+        if (st.size > MAX_INPUT_BYTES) {
+          return { rel, kind: "meta", meta: `${st.size}\0${st.mtimeMs}` };
+        }
+        return { rel, kind: "buf", buf: await readFile(safe) };
       } catch {
-        return { rel, buf: null as Buffer | null };
+        return { rel, kind: "missing" };
       }
     }),
   );
   const h = createHash("sha256");
-  for (const { rel, buf } of reads) {
-    if (buf) {
-      h.update(rel + "\0");
-      h.update(buf);
+  for (const item of reads) {
+    if (item.kind === "buf") {
+      h.update(item.rel + "\0");
+      h.update(item.buf);
+      h.update("\0");
+    } else if (item.kind === "meta") {
+      h.update(item.rel + "\0__meta__\0");
+      h.update(item.meta);
       h.update("\0");
     } else {
-      h.update(rel + "\0__missing__\0");
+      h.update(item.rel + "\0__missing__\0");
     }
   }
   h.update("\0discovery\0");

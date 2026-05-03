@@ -77,6 +77,37 @@ describe("computeInputHash parity (mjs ↔ ts)", () => {
     expect(before).toBe(after);
   });
 
+  it("falls back to metadata-hashing for files larger than 1MB (DoS bound)", async () => {
+    const big = Buffer.alloc(2 * 1024 * 1024, "x");
+    writeFileSync(join(dir, "huge.lock"), big);
+    const files = ["huge.lock"];
+    const a = await computeInputHashTs(dir, files);
+    const b = await computeInputHashMjs(dir, files);
+    expect(a).toBe(b);
+    // Modifying the content (same size) shouldn't change the metadata hash —
+    // but mtime advances on every write. Use timestamp-stable check: change
+    // size (truncate) and confirm hash flips.
+    const bigger = Buffer.alloc(3 * 1024 * 1024, "y");
+    writeFileSync(join(dir, "huge.lock"), bigger);
+    const c = await computeInputHashTs(dir, files);
+    expect(c).not.toBe(a);
+  });
+
+  it("ignores inputFiles entries beyond the 64-file cap", async () => {
+    // Create 100 files; first 64 (sorted) should hash, rest are dropped.
+    for (let i = 0; i < 100; i++) {
+      writeFileSync(join(dir, `f${String(i).padStart(3, "0")}.lock`), `v${i}`);
+    }
+    const files = Array.from({ length: 100 }, (_, i) => `f${String(i).padStart(3, "0")}.lock`);
+    const a = await computeInputHashTs(dir, files);
+    const b = await computeInputHashMjs(dir, files);
+    expect(a).toBe(b);
+    // Adding a 101st file (sorts after the cap) should NOT change the hash.
+    writeFileSync(join(dir, "z999.lock"), "after-cap");
+    const c = await computeInputHashTs(dir, [...files, "z999.lock"]);
+    expect(c).toBe(a);
+  });
+
   it("treats symlink-out-of-checkout inputs as missing (no host file read)", async () => {
     // Create an outside-checkout file the symlink will point at.
     const outsideDir = mkdtempSync(join(tmpdir(), "sym-hash-outside-"));
