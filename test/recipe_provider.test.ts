@@ -50,17 +50,18 @@ describe("LlmRecipeProvider", () => {
   it("cache miss invokes the author and writes recipe + manifest to disk", async () => {
     const p = new LlmRecipeProvider({ cacheRoot, author: goodAuthor as any });
     const r = await p.ensureRecipe({ repoId: "R1", repoFullName: "x/x", repoCheckoutDir: repo });
-    expect(r.recipePath.endsWith("R1.sh")).toBe(true);
+    expect(r.recipePath.endsWith(".sh")).toBe(true);
+    expect(r.recipePath).toMatch(/recipes\/R1\.[a-f0-9]{8}\.sh$/);
     expect(goodAuthor).toHaveBeenCalledTimes(1);
-    expect(existsSync(join(cacheRoot, "recipes", "R1.sh"))).toBe(true);
-    expect(existsSync(join(cacheRoot, "recipes", "R1.json"))).toBe(true);
+    expect(existsSync(r.recipePath)).toBe(true);
+    expect(existsSync(r.recipePath.replace(/\.sh$/, ".json"))).toBe(true);
     // Recipe wraps the body with the spec preamble + postamble.
-    const sh = readFileSync(join(cacheRoot, "recipes", "R1.sh"), "utf8");
+    const sh = readFileSync(r.recipePath, "utf8");
     expect(sh).toMatch(/set -euo pipefail/);
     expect(sh).toContain("npm ci --prefer-offline");
     expect(sh).toMatch(/exit 0\s*$/);
     // Files written with mode 0o600.
-    const mode = statSync(join(cacheRoot, "recipes", "R1.sh")).mode & 0o777;
+    const mode = statSync(r.recipePath).mode & 0o777;
     expect(mode).toBe(0o600);
   });
 
@@ -80,10 +81,10 @@ describe("LlmRecipeProvider", () => {
         },
       };
     });
-    await p.ensureRecipe({ repoId: "R1", repoFullName: "x/x", repoCheckoutDir: repo });
+    const r1 = await p.ensureRecipe({ repoId: "R1", repoFullName: "x/x", repoCheckoutDir: repo });
     goodAuthor.mockClear();
     const r2 = await p.ensureRecipe({ repoId: "R1", repoFullName: "x/x", repoCheckoutDir: repo });
-    expect(r2.recipePath.endsWith("R1.sh")).toBe(true);
+    expect(r2.recipePath).toBe(r1.recipePath);
     expect(r2.generated).toBe(false);
     expect(goodAuthor).toHaveBeenCalledTimes(0);
   });
@@ -119,8 +120,8 @@ describe("LlmRecipeProvider", () => {
     const p = new LlmRecipeProvider({ cacheRoot, author: fallbackAuthor as any });
     const r = await p.ensureRecipe({ repoId: "R1", repoFullName: "x/x", repoCheckoutDir: repo });
     expect(r.manifest.generatedBy).toBe("fallback-template");
-    expect(existsSync(join(cacheRoot, "recipes", "R1.sh"))).toBe(true);
-    const sh = readFileSync(join(cacheRoot, "recipes", "R1.sh"), "utf8");
+    expect(existsSync(r.recipePath)).toBe(true);
+    const sh = readFileSync(r.recipePath, "utf8");
     expect(sh).toContain("canned fallback");
   });
 
@@ -157,7 +158,30 @@ describe("LlmRecipeProvider", () => {
       p.ensureRecipe({ repoId: "R2", repoFullName: "x/x", repoCheckoutDir: repo }),
       p.ensureRecipe({ repoId: "R2", repoFullName: "x/x", repoCheckoutDir: repo }),
     ]);
-    expect(calls.every((c) => c.recipePath.endsWith("R2.sh"))).toBe(true);
+    expect(calls.every((c) => c.recipePath.endsWith(".sh"))).toBe(true);
+    expect(calls[0]!.recipePath).toBe(calls[1]!.recipePath);
     expect(goodAuthor).toHaveBeenCalledTimes(1);
+  });
+
+  it("repoIds with characters that map to the same sanitized stem don't collide", async () => {
+    const p = new LlmRecipeProvider({ cacheRoot, author: goodAuthor as any });
+    goodAuthor.mockImplementation(async (input: any) => {
+      const { computeInputHash } = await import("../src/workspace/recipes.js");
+      return {
+        source: "llm",
+        fallback: false,
+        recipe: "npm ci",
+        manifest: {
+          ...baseManifest,
+          inputHash: await computeInputHash(input.repoCheckoutDir, ["package-lock.json"]),
+        },
+      };
+    });
+    const a = await p.ensureRecipe({ repoId: "foo/bar", repoFullName: "x/x", repoCheckoutDir: repo });
+    const b = await p.ensureRecipe({ repoId: "foo_bar", repoFullName: "x/x", repoCheckoutDir: repo });
+    // Both sanitize to `foo_bar` but the hash suffix disambiguates them.
+    expect(a.recipePath).not.toBe(b.recipePath);
+    expect(existsSync(a.recipePath)).toBe(true);
+    expect(existsSync(b.recipePath)).toBe(true);
   });
 });

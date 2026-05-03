@@ -38,10 +38,17 @@ export interface RecipeProviderOptions {
   recipeTtlHours?: number;
 }
 
+// Strip control chars from manifest fields before they land in shell
+// comments — a newline (or `#\n…`) in repoFullName/repoId/generatedBy
+// would break out of the comment and inject lines BEFORE `set -euo
+// pipefail`. validateRecipe gates the body, not the preamble.
+const safeForComment = (s: string): string =>
+  String(s ?? "").replace(/[\x00-\x1F\x7F]+/g, " ").slice(0, 200);
+
 const PREAMBLE = (manifest: RecipeManifest) =>
   `#!/usr/bin/env bash
-# Symphony workspace recipe — generated ${manifest.generatedAt} by ${manifest.generatedBy} for ${manifest.repoFullName}
-# Manifest: ${manifest.repoId}.json — DO NOT EDIT by hand.
+# Symphony workspace recipe — generated ${safeForComment(manifest.generatedAt)} by ${safeForComment(manifest.generatedBy)} for ${safeForComment(manifest.repoFullName)}
+# Manifest: ${safeForComment(manifest.repoId)}.json — DO NOT EDIT by hand.
 set -euo pipefail
 test -n "\${WORKSPACE:-}" || { echo "WORKSPACE not set" >&2; exit 64; }
 cd "$WORKSPACE"
@@ -69,12 +76,17 @@ export class LlmRecipeProvider {
   }
 
   private paths(repoId: string) {
+    // Sanitize for filesystem-safety, but include a short hash of the raw
+    // repoId so distinct sources (`foo/bar` vs `foo_bar`) don't collide
+    // onto the same cache filename.
     const safe = repoId.replace(/[^A-Za-z0-9._-]/g, "_");
+    const tag = createHash("sha256").update(repoId).digest("hex").slice(0, 8);
+    const stem = `${safe}.${tag}`;
     const dir = join(this.cacheRoot, "recipes");
     return {
-      sh: join(dir, `${safe}.sh`),
-      json: join(dir, `${safe}.json`),
-      lock: join(dir, `${safe}.lock`),
+      sh: join(dir, `${stem}.sh`),
+      json: join(dir, `${stem}.json`),
+      lock: join(dir, `${stem}.lock`),
     };
   }
 

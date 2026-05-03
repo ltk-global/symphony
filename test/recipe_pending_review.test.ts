@@ -46,11 +46,12 @@ describe("LlmRecipeProvider review mode", () => {
     const p = new LlmRecipeProvider({ cacheRoot: root, author, reviewRequired: true });
     const r = await p.ensureRecipe({ repoId: "PR1", repoFullName: "x/x", repoCheckoutDir: repo });
     expect(r.recipePath.endsWith(".sh.pending")).toBe(true);
-    expect(existsSync(join(root, "recipes", "PR1.sh.pending"))).toBe(true);
-    expect(existsSync(join(root, "recipes", "PR1.json.pending"))).toBe(true);
+    expect(existsSync(r.recipePath)).toBe(true);
+    expect(existsSync(r.recipePath.replace(/\.sh\.pending$/, ".json.pending"))).toBe(true);
     // The non-pending .sh file must NOT be written when review is required.
-    expect(existsSync(join(root, "recipes", "PR1.sh"))).toBe(false);
-    expect(existsSync(join(root, "recipes", "PR1.json"))).toBe(false);
+    const finalSh = r.recipePath.replace(/\.pending$/, "");
+    expect(existsSync(finalSh)).toBe(false);
+    expect(existsSync(finalSh.replace(/\.sh$/, ".json"))).toBe(false);
   });
 
   it("does not regenerate while a pending recipe is awaiting review", async () => {

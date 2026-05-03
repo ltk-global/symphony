@@ -102,13 +102,16 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   { pattern: />>?\|?\s*["']?\/(?!dev\/(?:null|stderr|stdout)\b)[A-Za-z]/i, label: "absolute-write" },
   // Block redirects to parent-relative paths — `> ../foo` escapes $WORKSPACE.
   { pattern: />>?\|?\s*["']?\.\.\//, label: "absolute-write" },
+  // Block redirects through $WORKSPACE-prefixed traversal: `> $WORKSPACE/../x`.
+  { pattern: />>?\|?\s*["']?\$\{?WORKSPACE\}?\/+\.\./i, label: "absolute-write" },
   // Block filesystem-mutating commands writing to an absolute destination.
   // `tee` only needs `tee /path` (it reads from stdin which may come from a
   // prior pipe), so don't require a preceding operand for it.
   { pattern: /\b(cp|mv|install|mkdir|chmod|chown|ln|rmdir)\s+[^\n;&|]*\s["']?\/(?!dev\/(?:null|stderr|stdout)\b)[A-Za-z]/i, label: "absolute-write" },
   { pattern: /\b(tee|touch)\b[^\n;&|]*\s["']?\/(?!dev\/(?:null|stderr|stdout)\b)[A-Za-z]/i, label: "absolute-write" },
-  // Block filesystem-mutating commands writing to a parent-relative path.
-  { pattern: /\b(cp|mv|install|tee|touch|mkdir|chmod|chown|ln|rmdir)\b[^\n;&|]*\s["']?\.\.\//, label: "absolute-write" },
+  // Block filesystem-mutating commands writing to a parent-relative path
+  // OR through $WORKSPACE traversal.
+  { pattern: /\b(cp|mv|install|tee|touch|mkdir|chmod|chown|ln|rmdir)\b[^\n;&|]*\s["']?(\.\.\/|\$\{?WORKSPACE\}?\/+\.\.)/i, label: "absolute-write" },
   // Block redirects to home — `> ~/.npmrc`, `>> $HOME/.bashrc`, etc.
   // would mutate the runner's persistent user environment.
   { pattern: />>?\s*["']?(~|\$\{?HOME\b)/i, label: "home-write" },
