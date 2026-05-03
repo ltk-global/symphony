@@ -829,7 +829,11 @@ async function eagerBootstrapRecipe(repoFullName, repoId, token) {
     const persisted = await provider.ensureRecipe({ repoId: repoFullName, repoFullName, repoCheckoutDir: tmp });
     ok(`recipe written to ${persisted.recipePath}`);
   } catch (error) {
-    warn(`eager bootstrap failed: ${error instanceof Error ? error.message : error}`);
+    // execFileSync surfaces the full argv (including http.extraHeader=Bearer
+    // <token>) in error.message. Redact before logging.
+    const raw = error instanceof Error ? error.message : String(error);
+    const safe = raw.replace(/Authorization: Bearer [^\s'"]+/g, "Authorization: Bearer ***REDACTED***");
+    warn(`eager bootstrap failed: ${safe}`);
     info("Daemon will fall back to canned template until the operator runs `symphony recipe regen`.");
   } finally {
     if (tmp) {
@@ -939,10 +943,14 @@ function renderWorkflow(opts) {
   lines.push("      git clone \"https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git\" .");
   lines.push("    fi");
   lines.push("    git checkout -B \"${ISSUE_BRANCH_NAME:-symphony/${ISSUE_WORKSPACE_KEY}}\"");
-  lines.push("    # Source the LLM-authored install recipe if Symphony has one");
-  lines.push("    # cached for this repo and it's not flagged for review.");
+  lines.push("  # before_run sources the cached recipe on every dispatch (including");
+  lines.push("  # workspace reuse where after_create no-ops). SYMPHONY_RECIPE is set");
+  lines.push("  # by Symphony AFTER after_create completes, so sourcing must happen");
+  lines.push("  # in a hook that fires after the recipe-provider step.");
+  lines.push("  before_run: |");
+  lines.push("    set -euo pipefail");
   lines.push("    if [ -n \"${SYMPHONY_RECIPE:-}\" ] && [ -z \"${SYMPHONY_RECIPE_DISABLED:-}\" ] && [ -f \"$SYMPHONY_RECIPE\" ]; then");
-  lines.push("      source \"$SYMPHONY_RECIPE\"");
+  lines.push("      WORKSPACE=\"$ISSUE_WORKSPACE_PATH\" source \"$SYMPHONY_RECIPE\"");
   lines.push("    fi");
   lines.push("");
   lines.push("agent:");

@@ -269,6 +269,10 @@ export class WorkspaceManager {
       ISSUE_BRANCH_NAME: issue.branchName ?? "",
       ISSUE_WORKSPACE_KEY: workspaceKey,
       ISSUE_WORKSPACE_PATH: cwd,
+      // WORKSPACE is the variable the persisted recipe preamble guards on
+      // (`test -n "${WORKSPACE:-}" || exit 64`). Hooks that source the
+      // recipe inherit it without needing `WORKSPACE=$ISSUE_WORKSPACE_PATH`.
+      WORKSPACE: cwd,
       SYMPHONY_ATTEMPT: attempt === null ? "null" : String(attempt),
       ...extraEnv,
     };
