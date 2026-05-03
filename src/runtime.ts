@@ -111,6 +111,8 @@ export async function buildRuntimeComponents(workflowPath: string, env: NodeJS.P
     root: config.workspace.root,
     hooks: config.hooks,
     hookTimeoutMs: config.hooks.timeoutMs,
+    cache: config.workspace.cache,
+    githubToken: config.tracker.apiToken,
   });
   const runner =
     config.agent.kind === "codex"

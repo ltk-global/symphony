@@ -89,7 +89,15 @@ hooks:
   after_create: |
     set -euo pipefail
     if [ -z "${ISSUE_REPO_FULL_NAME:-}" ]; then exit 0; fi
-    git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git" .
+    if [ -n "${SYMPHONY_REPO_REF:-}" ] && [ -d "$SYMPHONY_REPO_REF" ]; then
+      # --dissociate copies borrowed objects in so the workspace doesn't
+      # depend on the bare cache being kept around past clone time.
+      git clone --reference "$SYMPHONY_REPO_REF" --dissociate \
+        "https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git" . \
+        || git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git" .
+    else
+      git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git" .
+    fi
     git checkout -B "${ISSUE_BRANCH_NAME:-symphony/${ISSUE_WORKSPACE_KEY}}"
 ```
 
