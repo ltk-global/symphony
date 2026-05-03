@@ -63,16 +63,23 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   // (bash would delete every operand). `$WORKSPACE` is the only $-prefixed
   // path allowed; no branch starts with it. Optional `--` separator and
   // opening quote handle `rm -rf -- "/"` etc.
-  { pattern: /rm\s+-[a-z]*r[a-z]*f?\b[^\n;&|]*\s(--\s+)?["']?(\/+|~|\$\{?HOME\b|\.\.\/)/i, label: "destructive-rm" },
+  // Drop the `-[a-z]*r[a-z]*f?` constraint — split short flags
+  // (`rm -f -r …`), long forms (`rm --recursive --force …`), and even
+  // unflagged `rm $HOME` are all destructive. Any `rm` invocation whose
+  // operands include a destructive target is rejected.
+  { pattern: /\brm\b[^\n;&|]*\s(--\s+)?["']?(\/+|~|\$\{?HOME\b|\.\.\/)/i, label: "destructive-rm" },
   // Any `..` traversal anywhere in an rm command's operand list — catches
   // `rm -rf "$WORKSPACE/../sibling"` even though `$WORKSPACE` is allowed
   // for the leading-target rule above.
-  { pattern: /\brm\s+-[a-z]*r[a-z]*f?\b[^\n;&|]*\.\.\//i, label: "destructive-rm-traversal" },
+  { pattern: /\brm\b[^\n;&|]*\.\.\//i, label: "destructive-rm-traversal" },
   // `\bsu\s+-\b` doesn't work — `-` is non-word so `\b` after it requires
   // a word char immediately, which fails for the common `su - root` form.
   // Drop the trailing boundary on the `su -` branch.
   { pattern: /\b(sudo|doas)\b|\bsu\s+-/i, label: "sudo" },
-  { pattern: /\b(systemctl|launchctl|service)\s+(start|stop|restart|disable|enable|reload)\b/i, label: "system-service" },
+  // `service` takes `service <name> <action>` (action follows the unit
+  // name); systemctl/launchctl take `<cmd> <action> [unit]` (action follows
+  // the command). Cover both shapes.
+  { pattern: /\b(systemctl|launchctl)\s+(start|stop|restart|disable|enable|reload|reload-or-restart)\b|\bservice\s+\S+\s+(start|stop|restart|reload|reload-or-restart)\b/i, label: "system-service" },
   { pattern: /\b(ssh|scp|rsync)\s+[^\n]*@/i, label: "ssh-out" },
   { pattern: /\bcrontab\s+-/i, label: "crontab" },
   { pattern: /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:/i, label: "fork-bomb" },
@@ -109,14 +116,20 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
     }
     for (const k of ["inputFiles", "discoveryFiles"] as const) {
       const v = m[k];
-      if (v !== undefined && !(Array.isArray(v) && v.every((x) => typeof x === "string"))) {
-        errors.push(`manifest.${k} must be string[]`);
+      if (v !== undefined) {
+        if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) {
+          errors.push(`manifest.${k} must be string[]`);
+        } else if (!v.every(isSafeRelativePath)) {
+          errors.push(`manifest.${k} entries must be safe relative paths (no leading /, no ..)`);
+        }
       }
     }
     if (m.cacheKeys !== undefined) {
       const ck = m.cacheKeys;
       if (!Array.isArray(ck) || !ck.every((entry) => isCacheKey(entry))) {
         errors.push("manifest.cacheKeys must be Array<{name, hashFiles[], path}>");
+      } else if (!ck.every((entry) => isSafeCacheKey(entry as Record<string, unknown>))) {
+        errors.push("manifest.cacheKeys paths must be safe relative paths (no leading /, no ..)");
       }
     }
     for (const k of ["approvedBy", "approvedAt"] as const) {
@@ -199,4 +212,18 @@ function isCacheKey(entry: unknown): boolean {
     && typeof e.path === "string"
     && Array.isArray(e.hashFiles)
     && e.hashFiles.every((x) => typeof x === "string");
+}
+
+function isSafeRelativePath(p: string): boolean {
+  if (typeof p !== "string" || p.length === 0) return false;
+  if (p.startsWith("/")) return false;
+  // Reject any segment equal to ".." (matches "..", "../foo", "foo/..", "a/../b").
+  return !p.split("/").some((seg) => seg === "..");
+}
+
+function isSafeCacheKey(e: Record<string, unknown>): boolean {
+  if (typeof e.path === "string" && !isSafeRelativePath(e.path)) return false;
+  const hashFiles = e.hashFiles;
+  if (Array.isArray(hashFiles) && !hashFiles.every((x) => typeof x === "string" && isSafeRelativePath(x))) return false;
+  return true;
 }
