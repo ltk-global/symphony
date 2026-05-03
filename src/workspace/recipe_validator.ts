@@ -34,7 +34,7 @@ const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   // disclosures; over-detection is preferred to under-detection here.
   { name: "github-token", pattern: /\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b/ },
   { name: "github-fine-grained", pattern: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/ },
-  { name: "slack-webhook", pattern: /https:\/\/hooks\.slack\.com\/services\/[A-Z0-9\/]+/ },
+  { name: "slack-webhook", pattern: /https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9\/]+/ },
   // Real Slack tokens are xox[baprs]-NNN-NNN-NNN-... ; require ≥2 dashes
   // after the prefix-dash so `xoxb-x` / `xoxb-fake` in test/comment text
   // doesn't false-positive.
@@ -48,13 +48,11 @@ const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
 const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\b(curl|wget|fetch)\b[^\n]*\|\s*(bash|sh|zsh)\b/i, label: "pipe-to-shell" },
   { pattern: /\beval\s+["'$]/, label: "eval-of-dynamic-input" },
-  // Allow optional opening quote before the destructive target so
-  // `rm -rf "/"`, `rm -rf '$HOME'`, etc. don't slip past the gate.
-  // Optional `--` separator before the target catches `rm -rf -- /`.
-  // Targets: `/`-rooted paths, `~/`, or `$HOME`/`${HOME}`. `$WORKSPACE` is
-  // the only env-var prefix that's allowed and naturally excluded since
-  // it doesn't start with any of these branches.
-  { pattern: /rm\s+-[a-z]*r[a-z]*f?\s+(--\s+)?["']?(\/+|~\/|\$\{?HOME\b)/i, label: "destructive-rm" },
+  // Targets: `/`-rooted, `~` (with or without `/`), `$HOME`/`${HOME}`, or
+  // any `../` parent-relative path (recipes run in $WORKSPACE — `..` escapes).
+  // Optional opening quote and `--` separator catch quoted/separator forms.
+  // `$WORKSPACE` is allowed (no branch starts with it).
+  { pattern: /rm\s+-[a-z]*r[a-z]*f?\s+(--\s+)?["']?(\/+|~|\$\{?HOME\b|\.\.\/)/i, label: "destructive-rm" },
   { pattern: /\b(sudo|doas|su\s+-)\b/i, label: "sudo" },
   { pattern: /\b(systemctl|launchctl|service)\s+(start|stop|restart|disable|enable|reload)\b/i, label: "system-service" },
   { pattern: /\b(ssh|scp|rsync)\s+[^\n]*@/i, label: "ssh-out" },
@@ -125,9 +123,14 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
     errors.push("recipe body contains carriage return");
   }
 
+  // Bash treats `\<newline>` as a line continuation, so a forbidden command
+  // can be split across lines to bypass single-line regex (e.g. `curl x \
+  // | bash`). Match against the joined form.
+  const joinedBody = body.replace(/\\\n/g, "");
+
   // Blocklist layer
   for (const rule of BLOCKLIST) {
-    if (rule.pattern.test(body)) {
+    if (rule.pattern.test(joinedBody)) {
       errors.push(`blocklist: ${rule.label}`);
     }
   }
@@ -138,7 +141,7 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
     try { return JSON.stringify(manifest); } catch { return ""; }
   })();
   for (const s of SECRET_PATTERNS) {
-    if (s.pattern.test(body) || s.pattern.test(manifestText)) {
+    if (s.pattern.test(joinedBody) || s.pattern.test(manifestText)) {
       errors.push(`secret-scan: ${s.name} detected — never inline tokens`);
     }
   }
