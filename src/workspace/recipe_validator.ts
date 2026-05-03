@@ -160,11 +160,13 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
     errors.push("recipe body contains carriage return");
   }
 
-  // Bash treats both `\<newline>` and a trailing `|<newline>` as pipeline
-  // continuations, so forbidden commands can be split across lines to
-  // bypass single-line regex (e.g. `curl x \\\n| bash` or `curl x |\nbash`).
-  // Match against the joined form.
+  // Bash treats `\<newline>` and trailing `|<newline>` as pipeline
+  // continuations, and a `#` after a pipe is a comment that ends at the
+  // next newline (the real command resumes on the line after). Forbidden
+  // commands can use any of these to bypass single-line regex. Strip
+  // comments first, then collapse continuations.
   const joinedBody = body
+    .replace(/#[^\n]*/g, "")
     .replace(/\\\n/g, "")
     .replace(/\|\s*\n\s*/g, "| ");
 
