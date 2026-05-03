@@ -110,13 +110,18 @@ export async function buildRuntimeComponents(workflowPath: string, env: NodeJS.P
     terminalStates: config.tracker.terminalStates,
     filters: config.tracker.filters,
   });
+  // One cache root drives BOTH the recipe provider's storage and the
+  // SYMPHONY_CACHE_DIR env var that hooks read. Recipes write into
+  // $SYMPHONY_CACHE_DIR (e.g., `node_modules` cache), so the two MUST
+  // match — otherwise hooks export one path while the provider stores
+  // recipes under another. SYMPHONY_CACHE_DIR is the operator override
+  // (also used by `symphony recipe …`); falls back to undefined so
+  // both sides take their default `~/.symphony-cache`.
+  const cacheRootOverride = process.env.SYMPHONY_CACHE_DIR;
   const recipeProvider: WorkspaceRecipeProvider | undefined =
     config.workspace.cache.strategy === "llm"
       ? new LlmRecipeProvider({
-          // Honor SYMPHONY_CACHE_DIR so the daemon and `symphony recipe …`
-          // CLI operate on the same cache root (otherwise the CLI honors
-          // the override and the daemon falls back to ~/.symphony-cache).
-          cacheRoot: process.env.SYMPHONY_CACHE_DIR,
+          cacheRoot: cacheRootOverride,
           author: createAuthorRecipe(),
           reviewRequired: config.workspace.cache.reviewRequired,
           recipeTtlHours: config.workspace.cache.recipeTtlHours,
@@ -126,6 +131,7 @@ export async function buildRuntimeComponents(workflowPath: string, env: NodeJS.P
     root: config.workspace.root,
     hooks: config.hooks,
     hookTimeoutMs: config.hooks.timeoutMs,
+    cacheDir: cacheRootOverride,
     cache: config.workspace.cache,
     githubToken: config.tracker.apiToken,
     recipeProvider,
