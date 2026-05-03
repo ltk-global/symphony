@@ -109,4 +109,19 @@ describe("authorRecipe — fallback paths", () => {
     expect(out.fallback).toBe(true);
     expect(out.reason).toMatch(/^llm_failed:/);
   });
+
+  it("rejects parsed JSON whose body is not a string", async () => {
+    const out = await authorRecipe({
+      context: { repoFullName: "x/x", repoId: "X" },
+      repoCheckoutDir: repo,
+      runSkillImpl: async () =>
+        JSON.stringify({
+          schema: "symphony.recipe.v1",
+          body: { not: "a string" },
+          manifest: { inputFiles: [], discoveryFiles: [], cacheKeys: [], lfs: false, submodules: false, notes: "" },
+        }),
+    });
+    expect(out.fallback).toBe(true);
+    expect(out.reason).toBe("parse_failed");
+  });
 });

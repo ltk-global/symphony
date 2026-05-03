@@ -10,7 +10,7 @@
 // context. Returns either { source: "llm", fallback: false, recipe,
 // manifest } or { source: null, fallback: true, reason } so the caller
 // can fall back to a canned template without throwing.
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -60,10 +60,17 @@ export async function authorRecipe({
     return { source: null, fallback: true, reason: "parse_failed" };
   }
 
+  if (typeof parsed?.body !== "string") {
+    return { source: null, fallback: true, reason: "parse_failed" };
+  }
+
   const inputFiles = Array.isArray(parsed?.manifest?.inputFiles)
     ? parsed.manifest.inputFiles
     : [];
-  const inputHash = await computeInputHash(repoCheckoutDir, inputFiles);
+  const discoveryFiles = Array.isArray(parsed?.manifest?.discoveryFiles)
+    ? parsed.manifest.discoveryFiles
+    : [];
+  const inputHash = await computeInputHash(repoCheckoutDir, inputFiles, discoveryFiles);
 
   const manifest = {
     schema: "symphony.recipe.v1",
@@ -73,7 +80,7 @@ export async function authorRecipe({
     generatedAt: new Date().toISOString(),
     inputHash,
     inputFiles,
-    discoveryFiles: parsed?.manifest?.discoveryFiles ?? [],
+    discoveryFiles,
     cacheKeys: parsed?.manifest?.cacheKeys ?? [],
     lfs: !!parsed?.manifest?.lfs,
     submodules: !!parsed?.manifest?.submodules,
@@ -85,7 +92,7 @@ export async function authorRecipe({
   return {
     source: "llm",
     fallback: false,
-    recipe: String(parsed?.body ?? ""),
+    recipe: parsed.body,
     manifest,
   };
 }
@@ -121,10 +128,14 @@ function extractJson(text) {
 // MUST stay byte-identical to `src/workspace/recipes.ts:computeInputHash`.
 // Drift between them silently invalidates every cached recipe. Parity is
 // asserted by `test/recipe_input_hash_parity.test.ts`.
-export async function computeInputHash(rootDir, files) {
-  const sorted = [...files].sort();
+//
+// inputFiles affect the recipe via content (read + hashed in sorted order).
+// discoveryFiles affect it via presence only (presence/absence sentinel).
+export async function computeInputHash(rootDir, inputFiles, discoveryFiles = []) {
+  const sortedInputs = [...inputFiles].sort();
+  const sortedDiscovery = [...discoveryFiles].sort();
   const reads = await Promise.all(
-    sorted.map(async (rel) => {
+    sortedInputs.map(async (rel) => {
       try {
         return { rel, buf: await readFile(join(rootDir, rel)) };
       } catch {
@@ -139,6 +150,17 @@ export async function computeInputHash(rootDir, files) {
       h.update(buf);
       h.update("\0");
     } else {
+      h.update(rel + "\0__missing__\0");
+    }
+  }
+  // Discovery section — separate marker so the two streams don't blend if
+  // the same path appears in both lists.
+  h.update("\0discovery\0");
+  for (const rel of sortedDiscovery) {
+    try {
+      await stat(join(rootDir, rel));
+      h.update(rel + "\0__present__\0");
+    } catch {
       h.update(rel + "\0__missing__\0");
     }
   }

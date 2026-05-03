@@ -5,7 +5,7 @@
 // the spec preamble/postamble forced around the body. A flock around the
 // generation phase makes concurrent prepares share work for the same repoId.
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { createHash } from "node:crypto";
@@ -142,8 +142,13 @@ export class LlmRecipeProvider {
     } catch {
       return null;
     }
-    // Drift check — recompute over the manifest's declared input set.
-    const fresh = await computeInputHash(input.repoCheckoutDir, manifest.inputFiles ?? []);
+    // Drift check — recompute over the manifest's declared input + discovery
+    // sets. Adding/removing a discoveryFile entry must invalidate the cache.
+    const fresh = await computeInputHash(
+      input.repoCheckoutDir,
+      manifest.inputFiles ?? [],
+      manifest.discoveryFiles ?? [],
+    );
     if (fresh !== manifest.inputHash) return null;
     // TTL check — invalid `generatedAt` parses to NaN, which fails the gate.
     const ts = new Date(manifest.generatedAt).getTime();
@@ -197,19 +202,27 @@ fi
   }
 }
 
-// Hash the manifest's declared input set deterministically. Reads in parallel,
-// hashes in sorted order so the hash agrees with the matching .mjs copy in
+// Hash the manifest's declared inputs + discovery set deterministically.
+// MUST stay byte-identical to the matching .mjs copy in
 // `scripts/lib/workspace-bootstrap.mjs` (parity asserted by
-// `test/recipe_input_hash_parity.test.ts`). Drift between the two would
-// silently invalidate every cached recipe.
-export async function computeInputHash(rootDir: string, files: string[]): Promise<string> {
-  const sorted = [...files].sort();
+// `test/recipe_input_hash_parity.test.ts`). Drift between the two silently
+// invalidates every cached recipe.
+//
+// inputFiles affect the recipe via content (read + hashed).
+// discoveryFiles affect it via presence only.
+export async function computeInputHash(
+  rootDir: string,
+  inputFiles: string[],
+  discoveryFiles: string[] = [],
+): Promise<string> {
+  const sortedInputs = [...inputFiles].sort();
+  const sortedDiscovery = [...discoveryFiles].sort();
   const reads = await Promise.all(
-    sorted.map(async (rel) => {
+    sortedInputs.map(async (rel) => {
       try {
         return { rel, buf: await readFile(join(rootDir, rel)) };
       } catch {
-        return { rel, buf: null };
+        return { rel, buf: null as Buffer | null };
       }
     }),
   );
@@ -220,6 +233,15 @@ export async function computeInputHash(rootDir: string, files: string[]): Promis
       h.update(buf);
       h.update("\0");
     } else {
+      h.update(rel + "\0__missing__\0");
+    }
+  }
+  h.update("\0discovery\0");
+  for (const rel of sortedDiscovery) {
+    try {
+      await stat(join(rootDir, rel));
+      h.update(rel + "\0__present__\0");
+    } catch {
       h.update(rel + "\0__missing__\0");
     }
   }

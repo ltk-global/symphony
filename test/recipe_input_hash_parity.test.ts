@@ -54,4 +54,26 @@ describe("computeInputHash parity (mjs ↔ ts)", () => {
     const after = await computeInputHashTs(dir, files);
     expect(before).not.toBe(after);
   });
+
+  it("invalidates when a discovery file appears (presence-only change)", async () => {
+    const files: string[] = [];
+    const discovery = ["yarn.lock"];
+    const before = await computeInputHashTs(dir, files, discovery);
+    writeFileSync(join(dir, "yarn.lock"), "v1");
+    const after = await computeInputHashTs(dir, files, discovery);
+    expect(before).not.toBe(after);
+    // ts and mjs agree on the new hash too
+    const afterMjs = await computeInputHashMjs(dir, files, discovery);
+    expect(after).toBe(afterMjs);
+  });
+
+  it("discoveryFile content changes do NOT invalidate (presence-only check)", async () => {
+    writeFileSync(join(dir, "yarn.lock"), "v1");
+    const files: string[] = [];
+    const discovery = ["yarn.lock"];
+    const before = await computeInputHashTs(dir, files, discovery);
+    writeFileSync(join(dir, "yarn.lock"), "v2-changed-but-still-present");
+    const after = await computeInputHashTs(dir, files, discovery);
+    expect(before).toBe(after);
+  });
 });
