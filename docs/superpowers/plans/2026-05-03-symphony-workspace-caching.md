@@ -2084,11 +2084,11 @@ npm run typecheck 2>&1 | tail -10
 
 Expected: green.
 
-- [ ] **Step 2: `/simplify` on M3a diff. Address findings.**
+- [x] **Step 2: `/simplify` on M3a diff. Address findings.**
 
-- [ ] **Step 3: `/codex-review` on M3a diff. Iterate until clean.**
+- [x] **Step 3: `/codex-review` on M3a diff. Iterate until clean.**
 
-- [ ] **Step 4: Checkpoint commit (no PR yet — M3 is one PR)**
+- [x] **Step 4: Checkpoint commit (no PR yet — M3 is one PR)**
 
 ```bash
 git add src/workspace/recipe_validator.ts skills/symphony-workspace-bootstrap/ test/recipe_validator*.test.ts test/recipe_secret_scanner.test.ts
@@ -2102,7 +2102,7 @@ git commit -m "M3a: recipe validator + bootstrap skill content"
 **Files:**
 - Test: `test/workspace_bootstrap.test.mjs` (create)
 
-- [ ] **Step 1: Write test**
+- [x] **Step 1: Write test**
 
 ```javascript
 import { describe, it, expect } from "vitest";
@@ -2147,14 +2147,14 @@ describe("authorRecipe", () => {
 });
 ```
 
-- [ ] **Step 2: Run — FAIL (module missing)**
+- [x] **Step 2: Run — FAIL (module missing)**
 
 ### Task 3.10: Implement `workspace-bootstrap.mjs`
 
 **Files:**
 - Create: `scripts/lib/workspace-bootstrap.mjs`
 
-- [ ] **Step 1: Write module**
+- [x] **Step 1: Write module**
 
 ```javascript
 // scripts/lib/workspace-bootstrap.mjs
@@ -2265,7 +2265,7 @@ export async function computeInputHash(rootDir, files) {
 }
 ```
 
-- [ ] **Step 2: Run — should PASS:**
+- [x] **Step 2: Run — should PASS:**
 
 ```bash
 npx vitest run test/workspace_bootstrap.test.mjs 2>&1 | tail -10
@@ -2273,7 +2273,7 @@ npx vitest run test/workspace_bootstrap.test.mjs 2>&1 | tail -10
 
 ### Task 3.11: Bootstrap fallback paths
 
-- [ ] **Step 1: Tests for unavailable runner / invalid JSON**
+- [x] **Step 1: Tests for unavailable runner / invalid JSON**
 
 ```javascript
 describe("authorRecipe — fallback paths", () => {
@@ -2300,7 +2300,7 @@ describe("authorRecipe — fallback paths", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should PASS** (impl already covers):
+- [x] **Step 2: Run — should PASS** (impl already covers):
 
 ```bash
 npx vitest run test/workspace_bootstrap.test.mjs 2>&1 | tail -10
@@ -2312,7 +2312,7 @@ npx vitest run test/workspace_bootstrap.test.mjs 2>&1 | tail -10
 - Test: `test/recipe_provider.test.ts` (create)
 - Create: `src/workspace/recipes.ts`
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```typescript
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -2377,7 +2377,7 @@ describe("LlmRecipeProvider", () => {
 });
 ```
 
-- [ ] **Step 2: Implement `recipes.ts`**
+- [x] **Step 2: Implement `recipes.ts`**
 
 ```typescript
 // src/workspace/recipes.ts
@@ -2558,7 +2558,7 @@ async function computeInputHash(rootDir: string, files: string[]): Promise<strin
 }
 ```
 
-- [ ] **Step 3: Run — should PASS:**
+- [x] **Step 3: Run — should PASS:**
 
 ```bash
 npx vitest run test/recipe_provider.test.ts 2>&1 | tail -10
@@ -2566,7 +2566,7 @@ npx vitest run test/recipe_provider.test.ts 2>&1 | tail -10
 
 ### Task 3.13: Add flock around recipe generation
 
-- [ ] **Step 1: Test for serialization**
+- [x] **Step 1: Test for serialization**
 
 ```typescript
   it("two concurrent ensureRecipe calls only invoke the author once", async () => {
@@ -2580,15 +2580,15 @@ npx vitest run test/recipe_provider.test.ts 2>&1 | tail -10
   });
 ```
 
-- [ ] **Step 2: Add flock identical to `refs.ts:withLock` to `recipes.ts`** and wrap the body of `ensureRecipe` after the cache check.
+- [x] **Step 2: Add flock identical to `refs.ts:withLock` to `recipes.ts`** and wrap the body of `ensureRecipe` after the cache check.
 
 (Pattern is identical — copy and adapt to lock at `p.lock`.)
 
-- [ ] **Step 3: Run — should PASS.**
+- [x] **Step 3: Run — should PASS.**
 
 ### Task 3.14: Review-mode pending recipes
 
-- [ ] **Step 1: Test in `test/recipe_pending_review.test.ts`** (create)
+- [x] **Step 1: Test in `test/recipe_pending_review.test.ts`** (create)
 
 ```typescript
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
