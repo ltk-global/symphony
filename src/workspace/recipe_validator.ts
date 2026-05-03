@@ -48,7 +48,9 @@ const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
 ];
 
 const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
-  { pattern: /\b(curl|wget|fetch)\b[^\n]*\|\s*(bash|sh|zsh)\b/i, label: "pipe-to-shell" },
+  // Allow optional path prefix (`/bin/bash`) and `env` wrapper before the
+  // shell name so `curl x | /bin/bash` and `curl x | env bash` don't slip.
+  { pattern: /\b(curl|wget|fetch)\b[^\n]*\|\s*(?:env\s+)?(?:[^\s|]*\/)?(bash|sh|zsh)\b/i, label: "pipe-to-shell" },
   // Catch backtick command substitution (`eval \`...\``) as well as the
   // quote-/`$`-prefixed forms.
   { pattern: /\beval\s+["'$`]/, label: "eval-of-dynamic-input" },
@@ -64,7 +66,10 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   // `rm -rf "$WORKSPACE/../sibling"` even though `$WORKSPACE` is allowed
   // for the leading-target rule above.
   { pattern: /\brm\s+-[a-z]*r[a-z]*f?\b[^\n;&|]*\.\.\//i, label: "destructive-rm-traversal" },
-  { pattern: /\b(sudo|doas|su\s+-)\b/i, label: "sudo" },
+  // `\bsu\s+-\b` doesn't work — `-` is non-word so `\b` after it requires
+  // a word char immediately, which fails for the common `su - root` form.
+  // Drop the trailing boundary on the `su -` branch.
+  { pattern: /\b(sudo|doas)\b|\bsu\s+-/i, label: "sudo" },
   { pattern: /\b(systemctl|launchctl|service)\s+(start|stop|restart|disable|enable|reload)\b/i, label: "system-service" },
   { pattern: /\b(ssh|scp|rsync)\s+[^\n]*@/i, label: "ssh-out" },
   { pattern: /\bcrontab\s+-/i, label: "crontab" },
