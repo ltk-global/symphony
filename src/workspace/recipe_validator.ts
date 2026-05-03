@@ -96,7 +96,13 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\b(ssh|scp|rsync)\s+\S/i, label: "ssh-out" },
   { pattern: /\bcrontab\s+-/i, label: "crontab" },
   { pattern: /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:/i, label: "fork-bomb" },
-  { pattern: />>?\s*\/etc\//i, label: "/etc/-write" },
+  // Block redirects to ANY absolute path except `/dev/{null,stderr,stdout}`.
+  // Covers `> /etc/foo`, `> /tmp/x`, `> /usr/local/bin/y`, etc. — recipes
+  // must use $WORKSPACE / $SYMPHONY_CACHE_DIR, not hardcoded absolute paths.
+  { pattern: />>?\s*["']?\/(?!dev\/(?:null|stderr|stdout)\b)[A-Za-z]/i, label: "absolute-write" },
+  // Block cp/mv/install/tee with absolute destination (same intent as the
+  // redirect rule above for non-redirecting writes).
+  { pattern: /\b(cp|mv|install|tee)\s+[^\n;&|]*\s["']?\/(?!dev\/(?:null|stderr|stdout)\b)[A-Za-z]/i, label: "absolute-write" },
   // Block redirects to home — `> ~/.npmrc`, `>> $HOME/.bashrc`, etc.
   // would mutate the runner's persistent user environment.
   { pattern: />>?\s*["']?(~|\$\{?HOME\b)/i, label: "home-write" },

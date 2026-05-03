@@ -21,7 +21,7 @@ describe("recipe validator — adversarial", () => {
     const r = validateRecipe(evil, m);
     expect(r.ok).toBe(false);
     // We expect at least one error per category we exercised.
-    const keywords = ["pipe", "eval", "rm", "sudo", "system", "ssh", "cron", "fork", "etc", "secret"];
+    const keywords = ["pipe", "eval", "rm", "sudo", "system", "ssh", "cron", "fork", "absolute-write", "secret"];
     for (const kw of keywords) {
       expect(r.errors.some((e) => new RegExp(kw, "i").test(e)), `missing category: ${kw}`).toBe(true);
     }
