@@ -76,12 +76,7 @@ export class LlmRecipeProvider {
   }
 
   private paths(repoId: string) {
-    // Sanitize for filesystem-safety, but include a short hash of the raw
-    // repoId so distinct sources (`foo/bar` vs `foo_bar`) don't collide
-    // onto the same cache filename.
-    const safe = repoId.replace(/[^A-Za-z0-9._-]/g, "_");
-    const tag = createHash("sha256").update(repoId).digest("hex").slice(0, 8);
-    const stem = `${safe}.${tag}`;
+    const stem = recipeStem(repoId);
     const dir = join(this.cacheRoot, "recipes");
     return {
       sh: join(dir, `${stem}.sh`),
@@ -228,6 +223,21 @@ fi
     await writeFile(p.json, JSON.stringify(manifest, null, 2), { mode: 0o600 });
     return { recipePath: p.sh, manifest, generated: true };
   }
+}
+
+/**
+ * Compute the cache filename stem for a given repoId. Used by the recipe
+ * provider AND the `symphony recipe …` CLI; keep callers on this single
+ * helper so a sanitization change propagates to both sides.
+ *
+ * Stem shape: `<sanitize(repoId)>.<8-char-sha256(repoId)>`. The hash
+ * suffix disambiguates `foo/bar` from `foo_bar` (which sanitize to the
+ * same prefix).
+ */
+export function recipeStem(repoId: string): string {
+  const safe = repoId.replace(/[^A-Za-z0-9._-]/g, "_");
+  const tag = createHash("sha256").update(repoId).digest("hex").slice(0, 8);
+  return `${safe}.${tag}`;
 }
 
 function isStringArray(v: unknown): v is string[] {
