@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { validateRecipe } from "../src/workspace/recipe_validator.js";
+import { makeManifest } from "./helpers/recipe_fixtures.js";
 
 const goodBody = `
 if [ -f package-lock.json ]; then
@@ -7,22 +8,12 @@ if [ -f package-lock.json ]; then
 fi
 `.trim();
 
-const goodManifest = {
-  schema: "symphony.recipe.v1",
+const goodManifest = makeManifest({
   repoId: "ABC",
   repoFullName: "acme/foo",
-  generatedBy: "claude-code",
-  generatedAt: "2026-05-03T00:00:00Z",
   inputHash: "sha256:abc",
   inputFiles: ["package-lock.json"],
-  discoveryFiles: [],
-  cacheKeys: [],
-  lfs: false,
-  submodules: false,
-  notes: "",
-  approvedBy: null,
-  approvedAt: null,
-};
+});
 
 describe("validateRecipe — schema", () => {
   it("accepts a well-formed body + manifest", () => {
@@ -42,6 +33,27 @@ describe("validateRecipe — schema", () => {
     const r = validateRecipe(big, goodManifest);
     expect(r.ok).toBe(false);
     expect(r.errors[0]).toMatch(/size/i);
+  });
+
+  it("rejects wrong field types (LLM JSON can't be trusted)", () => {
+    const bad = makeManifest({ inputFiles: "../../x" as any });
+    const r = validateRecipe(goodBody, bad);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => /inputFiles.*string\[\]/i.test(e))).toBe(true);
+  });
+
+  it("rejects non-array cacheKeys", () => {
+    const bad = makeManifest({ cacheKeys: {} as any });
+    const r = validateRecipe(goodBody, bad);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => /cacheKeys/i.test(e))).toBe(true);
+  });
+
+  it("rejects boolean lfs supplied as string", () => {
+    const bad = makeManifest({ lfs: "false" as any });
+    const r = validateRecipe(goodBody, bad);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => /lfs.*boolean/i.test(e))).toBe(true);
   });
 });
 
@@ -69,6 +81,11 @@ const BLOCKLIST_CASES: Array<[string, RegExp | null, string]> = [
   ["eval \"$(curl …)\"", /eval/i, "eval"],
   ["rm -rf /", /destructive/i, "rm -rf /"],
   ["rm -rf $HOME/.config", /destructive/i, "rm -rf $HOME"],
+  ["rm -rf \"/\"", /destructive/i, "rm -rf quoted root"],
+  ["rm -rf \"$HOME\"", /destructive/i, "rm -rf quoted $HOME"],
+  ["rm -rf '${HOME}/foo'", /destructive/i, "rm -rf single-quoted ${HOME}"],
+  ["rm -rf $WORKSPACE/build", null, "WORKSPACE allowed"],
+  ["rm -rf node_modules", null, "relative path benign"],
   ["sudo apt update", /sudo/i, "sudo"],
   ["systemctl restart something", /system/i, "systemctl"],
   ["ssh user@host 'cmd'", /ssh/i, "ssh out"],
