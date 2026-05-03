@@ -64,7 +64,7 @@ This plan ships three milestones, each its own PR. Each milestone ends with a qu
 
 ### Task 0.1: Confirm baseline
 
-- [ ] **Step 1: Verify clean working tree on main**
+- [x] **Step 1: Verify clean working tree on main**
 
 ```bash
 cd /Users/kenluong/Codes/symphony
@@ -74,7 +74,7 @@ git log --oneline -3
 
 Expected: clean tree (or only the existing untracked init-defaults stuff from prior sessions); HEAD includes `b8d1cea Spec: add /simplify + /codex-review per-step quality gates`.
 
-- [ ] **Step 2: Run baseline test suite**
+- [x] **Step 2: Run baseline test suite**
 
 ```bash
 npm test 2>&1 | tail -10
@@ -82,7 +82,7 @@ npm test 2>&1 | tail -10
 
 Expected: `Test Files  16 passed | 1 skipped (17)` and `Tests  139 passed | 5 skipped (144)`. Record these numbers — every milestone must keep or grow them.
 
-- [ ] **Step 3: Verify both LLM CLIs are on PATH**
+- [x] **Step 3: Verify both LLM CLIs are on PATH**
 
 ```bash
 which claude codex && claude --version && codex --version
@@ -105,7 +105,7 @@ Expected: both binaries present, codex >= 0.128 (per the codex research). If onl
 
 ### Task 1.0: Branch
 
-- [ ] **Step 1: Create branch**
+- [x] **Step 1: Create branch**
 
 ```bash
 git checkout -b feat/llm-runner
@@ -116,7 +116,7 @@ git checkout -b feat/llm-runner
 **Files:**
 - Test: `test/llm_runner.test.mjs` (create)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```javascript
 import { describe, it, expect, vi } from "vitest";
@@ -164,7 +164,7 @@ describe("runSkill — claude path", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 npx vitest run test/llm_runner.test.mjs 2>&1 | tail -10
@@ -177,7 +177,7 @@ Expected: FAIL — module `../scripts/lib/llm-runner.mjs` not found.
 **Files:**
 - Create: `scripts/lib/llm-runner.mjs`
 
-- [ ] **Step 1: Write the minimal module**
+- [x] **Step 1: Write the minimal module**
 
 ```javascript
 // scripts/lib/llm-runner.mjs
@@ -285,7 +285,7 @@ function spawnAndCollect(spawner, cmd, args, stdin, timeoutMs) {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it passes**
+- [x] **Step 2: Run the test to verify it passes**
 
 ```bash
 npx vitest run test/llm_runner.test.mjs 2>&1 | tail -10
@@ -298,7 +298,7 @@ Expected: PASS.
 **Files:**
 - Modify: `test/llm_runner.test.mjs`
 
-- [ ] **Step 1: Add the failing test**
+- [x] **Step 1: Add the failing test**
 
 ```javascript
 import { existsSync } from "node:fs";
@@ -340,7 +340,7 @@ describe("runSkill — codex path", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should PASS** (the impl is already complete from Task 1.2):
+- [x] **Step 2: Run — should PASS** (the impl is already complete from Task 1.2):
 
 ```bash
 npx vitest run test/llm_runner.test.mjs 2>&1 | tail -10
@@ -353,7 +353,7 @@ Expected: PASS. If it fails, fix the runner — the Task 1.2 impl is what was te
 **Files:**
 - Modify: `test/llm_runner.test.mjs`
 
-- [ ] **Step 1: Add tests**
+- [x] **Step 1: Add tests**
 
 ```javascript
 describe("runSkill — selection", () => {
@@ -391,7 +391,7 @@ describe("runSkill — selection", () => {
 });
 ```
 
-- [ ] **Step 2: Run** — should PASS:
+- [x] **Step 2: Run** — should PASS:
 
 ```bash
 npx vitest run test/llm_runner.test.mjs 2>&1 | tail -10
@@ -404,7 +404,7 @@ Expected: PASS.
 **Files:**
 - Modify: `scripts/lib/workflow-author.mjs:98-129` (the `runClaude` function and call site)
 
-- [ ] **Step 1: Replace the `runClaude` function call with `runSkill`**
+- [x] **Step 1: Replace the `runClaude` function call with `runSkill`**
 
 Replace the `runClaude` function and its caller in `workflow-author.mjs`. New shape:
 
@@ -438,7 +438,7 @@ import { runSkill, LlmUnavailableError } from "./llm-runner.mjs";
 
 Also delete the existing `if (!isOnPath(claudeCommand)) { return …; }` guard at the top of `authorWorkflow` — `runSkill` handles availability internally.
 
-- [ ] **Step 2: Run the existing workflow-author tests to verify nothing regressed**
+- [x] **Step 2: Run the existing workflow-author tests to verify nothing regressed**
 
 ```bash
 npx vitest run 2>&1 | grep -E "Test Files|Tests " | tail -5
@@ -451,7 +451,7 @@ Expected: same numbers as baseline (139 + 5 skipped). If any test fails, the ref
 **Files:**
 - Create: `test/workflow_author_refactor.test.mjs`
 
-- [ ] **Step 1: Write the test**
+- [x] **Step 1: Write the test**
 
 ```javascript
 import { describe, it, expect, vi } from "vitest";
@@ -543,7 +543,7 @@ describe("workflow-author post-llm-runner refactor", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should PASS:**
+- [x] **Step 2: Run — should PASS:**
 
 ```bash
 npx vitest run test/workflow_author_refactor.test.mjs 2>&1 | tail -10
@@ -553,7 +553,7 @@ Expected: PASS.
 
 ### Task 1.7: M1 quality gate
 
-- [ ] **Step 1: Full test suite**
+- [x] **Step 1: Full test suite**
 
 ```bash
 npm test 2>&1 | grep -E "Test Files|Tests " | tail -5
@@ -561,7 +561,7 @@ npm test 2>&1 | grep -E "Test Files|Tests " | tail -5
 
 Expected: count of passed tests **strictly greater** than baseline (we added new ones); no failures.
 
-- [ ] **Step 2: Type-check**
+- [x] **Step 2: Type-check**
 
 ```bash
 npm run typecheck 2>&1 | tail -10
@@ -569,7 +569,7 @@ npm run typecheck 2>&1 | tail -10
 
 Expected: clean.
 
-- [ ] **Step 3: Run `/simplify` skill**
+- [x] **Step 3: Run `/simplify` skill**
 
 Invoke the `simplify` skill on the M1 diff. Address any findings.
 
@@ -577,7 +577,7 @@ Invoke the `simplify` skill on the M1 diff. Address any findings.
 /simplify
 ```
 
-- [ ] **Step 4: Run `/codex-review` skill**
+- [x] **Step 4: Run `/codex-review` skill**
 
 ```
 /codex-review
@@ -585,7 +585,7 @@ Invoke the `simplify` skill on the M1 diff. Address any findings.
 
 Iterate until clean.
 
-- [ ] **Step 5: Commit M1 + open PR**
+- [x] **Step 5: Commit M1 + open PR**
 
 ```bash
 git add scripts/lib/llm-runner.mjs scripts/lib/workflow-author.mjs test/llm_runner.test.mjs test/workflow_author_refactor.test.mjs
@@ -609,10 +609,10 @@ Pure refactor — extracts the claude-spawn shape from \`workflow-author.mjs\` i
 Foundation for M2 (reference clones) and M3 (recipe layer).
 
 ## Test plan
-- [ ] \`npm test\` green (140+ tests)
-- [ ] \`npm run typecheck\` clean
-- [ ] Manual smoke: rerun \`./scripts/init.sh --help\` and the wizard's claude-print path; output matches prior runs
-- [ ] Manual codex smoke: \`SYMPHONY_LLM_RUNNER=codex\` runs the wizard against a known project; recipe written
+- [x] \`npm test\` green (140+ tests)
+- [x] \`npm run typecheck\` clean
+- [x] Manual smoke: rerun \`./scripts/init.sh --help\` and the wizard's claude-print path; output matches prior runs
+- [x] Manual codex smoke: \`SYMPHONY_LLM_RUNNER=codex\` runs the wizard against a known project; recipe written
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
