@@ -3,11 +3,17 @@ import { Command } from "commander";
 import { log } from "./log.js";
 import { SymphonyRuntime } from "./runtime.js";
 import { startConsoleServer, type ConsoleServer } from "./server/index.js";
+import { buildRecipeCommand } from "./workspace/recipes_cli.js";
 
 const program = new Command();
+program.name("symphony");
+
+// `symphony recipe …` — operator inspection of the workspace-cache recipes.
+program.addCommand(buildRecipeCommand());
 
 program
-  .name("symphony")
+  .command("daemon", { isDefault: true })
+  .description("Run the Symphony daemon (default).")
   .option("-w, --workflow <path>", "path to WORKFLOW.md", "WORKFLOW.md")
   .option("--once", "run one polling tick and exit")
   .option("--port <port>", "enable the operator console HTTP server on this port (overrides server.port in workflow)", parseInt)

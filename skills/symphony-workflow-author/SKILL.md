@@ -99,6 +99,15 @@ hooks:
       git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git" .
     fi
     git checkout -B "${ISSUE_BRANCH_NAME:-symphony/${ISSUE_WORKSPACE_KEY}}"
+  # before_run sources the cached recipe on every dispatch (including
+  # workspace reuse where after_create no-ops). SYMPHONY_RECIPE is set
+  # by Symphony AFTER after_create completes, so sourcing must happen
+  # in a hook that fires after the recipe-provider step.
+  before_run: |
+    set -euo pipefail
+    if [ -n "${SYMPHONY_RECIPE:-}" ] && [ -z "${SYMPHONY_RECIPE_DISABLED:-}" ] && [ -f "$SYMPHONY_RECIPE" ]; then
+      WORKSPACE="$ISSUE_WORKSPACE_PATH" source "$SYMPHONY_RECIPE"
+    fi
 ```
 
 If `context.slack` is provided, also emit a `hooks.on_event` rule (see Slack section below).

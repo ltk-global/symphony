@@ -5,13 +5,22 @@
 // optionally start the daemon. Read by humans first, code second — keep
 // prompts short and unambiguous.
 
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { authorWorkflow } from "./lib/workflow-author.mjs";
+import { authorRecipe } from "./lib/workspace-bootstrap.mjs";
 import { runProjectChecks, formatChecks, checksFailed } from "./lib/project-checks.mjs";
-import { resolve, dirname } from "node:path";
+import { tmpdir } from "node:os";
+import { resolve, dirname, join } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+
+// Wizard CLI flags. Currently just `--no-eager-bootstrap` for skipping the
+// LLM-authored recipe priming step. Parsed once at module load so the rest
+// of the wizard can branch on a constant rather than threading argv through.
+const WIZARD_FLAGS = {
+  noEagerBootstrap: process.argv.includes("--no-eager-bootstrap"),
+};
 
 const C = {
   reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
@@ -339,6 +348,28 @@ async function main() {
   info(`  · ${C.dim}'Use pnpm test and pnpm lint; deploy to Vercel preview before verify.'${C.reset}`);
   info(`  · ${C.dim}'When IRIS blocks, also assign a human reviewer (gh issue edit --add-assignee).'${C.reset}`);
   const brief = (await ask("Brief (blank = default status-driven)")).trim();
+
+  // ── 9c. Eager workspace-recipe bootstrap ─────────────
+  // Probe the project's most-common repo, shallow-clone it, and have the LLM
+  // skill author a workspace-cache recipe NOW so the first dispatch hits a
+  // warm cache. Skipped on `--no-eager-bootstrap`. All failures are
+  // non-fatal — workflow authoring proceeds either way.
+  if (!WIZARD_FLAGS.noEagerBootstrap) {
+    head("Workspace cache (eager recipe priming)");
+    info("Probing the Project for a primary repo, then having the LLM author a recipe.");
+    info("Skip with `--no-eager-bootstrap` if you want the daemon to do this lazily.");
+    try {
+      const probed = await probePrimaryRepo(token, project.id);
+      if (!probed) {
+        warn("No primary repo detected on the project — daemon will bootstrap lazily on first dispatch.");
+      } else {
+        ok(`primary repo: ${probed.repoFullName} (id: ${probed.repoId.slice(0, 12)}…)`);
+        await eagerBootstrapRecipe(probed.repoFullName, token);
+      }
+    } catch (error) {
+      warn(`eager bootstrap skipped: ${error instanceof Error ? error.message : error}`);
+    }
+  }
 
   // ── 10. Write WORKFLOW.md ─────────────────────────────
   head("Writing WORKFLOW.md");
@@ -710,6 +741,112 @@ async function resolveProjectByUrl(token, url) {
   return data[isOrg ? "organization" : "user"]?.projectV2 ?? null;
 }
 
+// Probe the project's first page of items. Returns the most-common
+// `repository.nameWithOwner` (and its node ID so the bootstrap result is
+// keyed deterministically), or `null` when the project has no linked
+// repos / mixed-repo / fewer than the threshold below.
+async function probePrimaryRepo(token, projectId) {
+  const data = await graphql(token, `
+    query($id: ID!) {
+      node(id: $id) {
+        ... on ProjectV2 {
+          items(first: 50) {
+            nodes {
+              content {
+                ... on Issue { repository { nameWithOwner, id } }
+                ... on PullRequest { repository { nameWithOwner, id } }
+              }
+            }
+          }
+        }
+      }
+    }
+  `, { id: projectId });
+  const repos = (data.node?.items?.nodes ?? [])
+    .map((n) => n.content?.repository)
+    .filter((r) => r && r.nameWithOwner);
+  if (repos.length === 0) return null;
+  const counts = new Map();
+  for (const r of repos) {
+    const key = r.nameWithOwner;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  let best = null;
+  for (const [name, n] of counts) {
+    if (!best || n > best.count) best = { name, count: n };
+  }
+  if (!best || best.count < 1) return null;
+  // Surface a warning if multiple repos exist — operator should know we're
+  // priming for the dominant one only.
+  if (counts.size > 1) {
+    info(`mixed repos detected (${counts.size} distinct); priming for most-common: ${best.name} (${best.count}/${repos.length} items).`);
+  }
+  const repoNode = repos.find((r) => r.nameWithOwner === best.name);
+  return { repoFullName: best.name, repoId: repoNode?.id ?? best.name };
+}
+
+// Shallow-clone the repo to a tmp dir, invoke the LLM-authored recipe path,
+// persist into ~/.symphony-cache via LlmRecipeProvider. All errors caught;
+// result is logged but the wizard continues.
+async function eagerBootstrapRecipe(repoFullName, token) {
+  let tmp = null;
+  try {
+    tmp = mkdtempSync(join(tmpdir(), "sym-bs-"));
+    info(`shallow-cloning ${repoFullName}…`);
+    // Public form for the URL — `git -c http.extraHeader=...` supplies
+    // the token without persisting it in `remote.origin.url`. Mirrors how
+    // `WorkspaceManager.computeCacheEnv` handles the bare clone.
+    const cloneUrl = `https://github.com/${repoFullName}.git`;
+    const args = [
+      "-c",
+      `http.extraHeader=Authorization: Bearer ${token}`,
+      "clone", "--depth", "1", "--quiet",
+      cloneUrl, tmp,
+    ];
+    execFileSync("git", args, { stdio: ["ignore", "ignore", "pipe"] });
+    ok(`cloned to ${tmp}`);
+
+    // Hand the LLM call to LlmRecipeProvider as a lazy author callback —
+    // ensureRecipe checks the on-disk cache first and only invokes the
+    // author on miss/drift. Saves the 30-90s LLM round-trip when re-running
+    // init for a repo that already has a fresh recipe.
+    const { LlmRecipeProvider } = await import("../dist/src/workspace/recipes.js");
+    const provider = new LlmRecipeProvider({
+      cacheRoot: process.env.SYMPHONY_CACHE_DIR, // honor operator override
+      author: async (input) => {
+        info("authoring recipe via LLM skill (this may take ~30-90s)…");
+        const r = await authorRecipe({
+          context: input.context,
+          repoCheckoutDir: input.repoCheckoutDir,
+        });
+        return r;
+      },
+      reviewRequired: false,
+    });
+    // Use repoFullName as the cache key — must match what
+    // WorkspaceManager passes (recipeStem sanitizes internally; passing
+    // the GitHub node ID here would store under a stem the daemon never
+    // looks up, missing the warm-cache path).
+    const persisted = await provider.ensureRecipe({ repoId: repoFullName, repoFullName, repoCheckoutDir: tmp });
+    if (persisted.generated) {
+      ok(`recipe written to ${persisted.recipePath}`);
+    } else {
+      ok(`existing recipe reused (no LLM call): ${persisted.recipePath}`);
+    }
+  } catch (error) {
+    // execFileSync surfaces the full argv (including http.extraHeader=Bearer
+    // <token>) in error.message. Redact before logging.
+    const raw = error instanceof Error ? error.message : String(error);
+    const safe = raw.replace(/Authorization: Bearer [^\s'"]+/g, "Authorization: Bearer ***REDACTED***");
+    warn(`eager bootstrap failed: ${safe}`);
+    info("Daemon will fall back to canned template until the operator runs `symphony recipe regen`.");
+  } finally {
+    if (tmp) {
+      try { rmSync(tmp, { recursive: true, force: true }); } catch {}
+    }
+  }
+}
+
 async function fetchStatusOptions(token, projectId) {
   const data = await graphql(token, `
     query($id: ID!) {
@@ -811,6 +948,15 @@ function renderWorkflow(opts) {
   lines.push("      git clone \"https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git\" .");
   lines.push("    fi");
   lines.push("    git checkout -B \"${ISSUE_BRANCH_NAME:-symphony/${ISSUE_WORKSPACE_KEY}}\"");
+  lines.push("  # before_run sources the cached recipe on every dispatch (including");
+  lines.push("  # workspace reuse where after_create no-ops). SYMPHONY_RECIPE is set");
+  lines.push("  # by Symphony AFTER after_create completes, so sourcing must happen");
+  lines.push("  # in a hook that fires after the recipe-provider step.");
+  lines.push("  before_run: |");
+  lines.push("    set -euo pipefail");
+  lines.push("    if [ -n \"${SYMPHONY_RECIPE:-}\" ] && [ -z \"${SYMPHONY_RECIPE_DISABLED:-}\" ] && [ -f \"$SYMPHONY_RECIPE\" ]; then");
+  lines.push("      WORKSPACE=\"$ISSUE_WORKSPACE_PATH\" source \"$SYMPHONY_RECIPE\"");
+  lines.push("    fi");
   lines.push("");
   lines.push("agent:");
   lines.push(`  kind: ${opts.agentKind}`);

@@ -32,6 +32,16 @@ export async function runSkill({
   return await runCodex({ skill, message, codexCommand, spawner, timeoutMs });
 }
 
+/**
+ * Pick the runner that runSkill would invoke for the same arguments,
+ * without spawning. Useful for callers that need to record the actual
+ * runner in a manifest without re-implementing the auto-selection rules.
+ * Returns "claude" | "codex" | null (when neither is available).
+ */
+export function whichLlm({ runner = "auto", claudeCommand = "claude", codexCommand = "codex" } = {}) {
+  return pickRunner(runner, { claudeCommand, codexCommand });
+}
+
 function pickRunner(runner, { claudeCommand, codexCommand }) {
   const override = process.env.SYMPHONY_LLM_RUNNER;
   const want = override || runner;

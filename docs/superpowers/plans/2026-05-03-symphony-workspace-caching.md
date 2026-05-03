@@ -1539,7 +1539,7 @@ This milestone is large. We split it into 3 sub-milestones (M3a/b/c) that each e
 
 ### Task 3.0: Branch from main
 
-- [ ] **Step 1: Fresh branch off main (after M2 merges)**
+- [x] **Step 1: Fresh branch off main (after M2 merges)**
 
 ```bash
 git checkout main && git pull && git checkout -b feat/workspace-recipes
@@ -1552,7 +1552,7 @@ git checkout main && git pull && git checkout -b feat/workspace-recipes
 **Files:**
 - Test: `test/recipe_validator.test.ts` (create)
 
-- [ ] **Step 1: Write tests for the schema layer**
+- [x] **Step 1: Write tests for the schema layer**
 
 ```typescript
 import { describe, it, expect } from "vitest";
@@ -1603,7 +1603,7 @@ describe("validateRecipe — schema", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should FAIL:**
+- [x] **Step 2: Run — should FAIL:**
 
 ```bash
 npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
@@ -1616,7 +1616,7 @@ Expected: FAIL — module missing.
 **Files:**
 - Create: `src/workspace/recipe_validator.ts`
 
-- [ ] **Step 1: Write the module**
+- [x] **Step 1: Write the module**
 
 ```typescript
 // src/workspace/recipe_validator.ts
@@ -1674,7 +1674,7 @@ export function validateRecipe(body: string, manifest: RecipeManifest): Validati
 }
 ```
 
-- [ ] **Step 2: Run — should PASS:**
+- [x] **Step 2: Run — should PASS:**
 
 ```bash
 npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
@@ -1684,7 +1684,7 @@ Expected: PASS.
 
 ### Task 3.3: Charset + control-char check
 
-- [ ] **Step 1: Add tests**
+- [x] **Step 1: Add tests**
 
 In `test/recipe_validator.test.ts`:
 
@@ -1708,7 +1708,7 @@ describe("validateRecipe — charset", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should FAIL:**
+- [x] **Step 2: Run — should FAIL:**
 
 ```bash
 npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
@@ -1716,7 +1716,7 @@ npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
 
 Expected: FAIL.
 
-- [ ] **Step 3: Add charset check to `validateRecipe`**
+- [x] **Step 3: Add charset check to `validateRecipe`**
 
 ```typescript
   // Charset layer — UTF-8 already enforced by string type; reject NUL + CR + other control chars.
@@ -1730,7 +1730,7 @@ Expected: FAIL.
 
 Insert before the final `return`.
 
-- [ ] **Step 4: Run — should PASS:**
+- [x] **Step 4: Run — should PASS:**
 
 ```bash
 npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
@@ -1738,7 +1738,7 @@ npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
 
 ### Task 3.4: Regex blocklist test cases
 
-- [ ] **Step 1: Add table-driven tests**
+- [x] **Step 1: Add table-driven tests**
 
 ```typescript
 const BLOCKLIST_CASES: Array<[string, RegExp | null, string]> = [
@@ -1770,13 +1770,13 @@ describe("validateRecipe — blocklist", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should FAIL** (blocklist not implemented):
+- [x] **Step 2: Run — should FAIL** (blocklist not implemented):
 
 ```bash
 npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
 ```
 
-- [ ] **Step 3: Implement blocklist in `validateRecipe`**
+- [x] **Step 3: Implement blocklist in `validateRecipe`**
 
 Add at module scope:
 
@@ -1805,7 +1805,7 @@ In the function body (before `return`):
   }
 ```
 
-- [ ] **Step 4: Run — should PASS:**
+- [x] **Step 4: Run — should PASS:**
 
 ```bash
 npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
@@ -1813,7 +1813,7 @@ npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
 
 ### Task 3.5: Secret scanner
 
-- [ ] **Step 1: Failing test in `test/recipe_secret_scanner.test.ts`** (create)
+- [x] **Step 1: Failing test in `test/recipe_secret_scanner.test.ts`** (create)
 
 ```typescript
 import { describe, it, expect } from "vitest";
@@ -1858,13 +1858,13 @@ describe("validateRecipe — secret scan", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should FAIL:**
+- [x] **Step 2: Run — should FAIL:**
 
 ```bash
 npx vitest run test/recipe_secret_scanner.test.ts 2>&1 | tail -10
 ```
 
-- [ ] **Step 3: Add secret patterns to `recipe_validator.ts`**
+- [x] **Step 3: Add secret patterns to `recipe_validator.ts`**
 
 ```typescript
 const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
@@ -1886,7 +1886,7 @@ In `validateRecipe`:
   }
 ```
 
-- [ ] **Step 4: Run — should PASS:**
+- [x] **Step 4: Run — should PASS:**
 
 ```bash
 npx vitest run test/recipe_secret_scanner.test.ts 2>&1 | tail -10
@@ -1894,7 +1894,7 @@ npx vitest run test/recipe_secret_scanner.test.ts 2>&1 | tail -10
 
 ### Task 3.6: Adversarial validation test
 
-- [ ] **Step 1: Create `test/recipe_validator.adversarial.test.ts`**
+- [x] **Step 1: Create `test/recipe_validator.adversarial.test.ts`**
 
 ```typescript
 import { describe, it, expect } from "vitest";
@@ -1934,7 +1934,7 @@ describe("recipe validator — adversarial", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should PASS** (validator already covers all):
+- [x] **Step 2: Run — should PASS** (validator already covers all):
 
 ```bash
 npx vitest run test/recipe_validator.adversarial.test.ts 2>&1 | tail -10
@@ -1945,7 +1945,7 @@ npx vitest run test/recipe_validator.adversarial.test.ts 2>&1 | tail -10
 **Files:**
 - Create: `skills/symphony-workspace-bootstrap/SKILL.md`
 
-- [ ] **Step 1: Write the skill**
+- [x] **Step 1: Write the skill**
 
 ```markdown
 ---
@@ -2036,7 +2036,7 @@ A regex blocklist enforces these post-hoc. Recipes that fail validation are reje
 ```
 ```
 
-- [ ] **Step 2: Skill validation runs against an example output via the validator**
+- [x] **Step 2: Skill validation runs against an example output via the validator**
 
 Add a test `test/recipe_validator.skill_example.test.ts`:
 
@@ -2075,7 +2075,7 @@ Expected: PASS.
 
 ### Task 3.8: M3a quality gate
 
-- [ ] **Step 1: Full suite + typecheck:**
+- [x] **Step 1: Full suite + typecheck:**
 
 ```bash
 npm test 2>&1 | grep -E "Test Files|Tests " | tail -5
@@ -2084,11 +2084,11 @@ npm run typecheck 2>&1 | tail -10
 
 Expected: green.
 
-- [ ] **Step 2: `/simplify` on M3a diff. Address findings.**
+- [x] **Step 2: `/simplify` on M3a diff. Address findings.**
 
-- [ ] **Step 3: `/codex-review` on M3a diff. Iterate until clean.**
+- [x] **Step 3: `/codex-review` on M3a diff. Iterate until clean.**
 
-- [ ] **Step 4: Checkpoint commit (no PR yet — M3 is one PR)**
+- [x] **Step 4: Checkpoint commit (no PR yet — M3 is one PR)**
 
 ```bash
 git add src/workspace/recipe_validator.ts skills/symphony-workspace-bootstrap/ test/recipe_validator*.test.ts test/recipe_secret_scanner.test.ts
@@ -2102,7 +2102,7 @@ git commit -m "M3a: recipe validator + bootstrap skill content"
 **Files:**
 - Test: `test/workspace_bootstrap.test.mjs` (create)
 
-- [ ] **Step 1: Write test**
+- [x] **Step 1: Write test**
 
 ```javascript
 import { describe, it, expect } from "vitest";
@@ -2147,14 +2147,14 @@ describe("authorRecipe", () => {
 });
 ```
 
-- [ ] **Step 2: Run — FAIL (module missing)**
+- [x] **Step 2: Run — FAIL (module missing)**
 
 ### Task 3.10: Implement `workspace-bootstrap.mjs`
 
 **Files:**
 - Create: `scripts/lib/workspace-bootstrap.mjs`
 
-- [ ] **Step 1: Write module**
+- [x] **Step 1: Write module**
 
 ```javascript
 // scripts/lib/workspace-bootstrap.mjs
@@ -2265,7 +2265,7 @@ export async function computeInputHash(rootDir, files) {
 }
 ```
 
-- [ ] **Step 2: Run — should PASS:**
+- [x] **Step 2: Run — should PASS:**
 
 ```bash
 npx vitest run test/workspace_bootstrap.test.mjs 2>&1 | tail -10
@@ -2273,7 +2273,7 @@ npx vitest run test/workspace_bootstrap.test.mjs 2>&1 | tail -10
 
 ### Task 3.11: Bootstrap fallback paths
 
-- [ ] **Step 1: Tests for unavailable runner / invalid JSON**
+- [x] **Step 1: Tests for unavailable runner / invalid JSON**
 
 ```javascript
 describe("authorRecipe — fallback paths", () => {
@@ -2300,7 +2300,7 @@ describe("authorRecipe — fallback paths", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should PASS** (impl already covers):
+- [x] **Step 2: Run — should PASS** (impl already covers):
 
 ```bash
 npx vitest run test/workspace_bootstrap.test.mjs 2>&1 | tail -10
@@ -2312,7 +2312,7 @@ npx vitest run test/workspace_bootstrap.test.mjs 2>&1 | tail -10
 - Test: `test/recipe_provider.test.ts` (create)
 - Create: `src/workspace/recipes.ts`
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```typescript
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -2377,7 +2377,7 @@ describe("LlmRecipeProvider", () => {
 });
 ```
 
-- [ ] **Step 2: Implement `recipes.ts`**
+- [x] **Step 2: Implement `recipes.ts`**
 
 ```typescript
 // src/workspace/recipes.ts
@@ -2558,7 +2558,7 @@ async function computeInputHash(rootDir: string, files: string[]): Promise<strin
 }
 ```
 
-- [ ] **Step 3: Run — should PASS:**
+- [x] **Step 3: Run — should PASS:**
 
 ```bash
 npx vitest run test/recipe_provider.test.ts 2>&1 | tail -10
@@ -2566,7 +2566,7 @@ npx vitest run test/recipe_provider.test.ts 2>&1 | tail -10
 
 ### Task 3.13: Add flock around recipe generation
 
-- [ ] **Step 1: Test for serialization**
+- [x] **Step 1: Test for serialization**
 
 ```typescript
   it("two concurrent ensureRecipe calls only invoke the author once", async () => {
@@ -2580,15 +2580,15 @@ npx vitest run test/recipe_provider.test.ts 2>&1 | tail -10
   });
 ```
 
-- [ ] **Step 2: Add flock identical to `refs.ts:withLock` to `recipes.ts`** and wrap the body of `ensureRecipe` after the cache check.
+- [x] **Step 2: Add flock identical to `refs.ts:withLock` to `recipes.ts`** and wrap the body of `ensureRecipe` after the cache check.
 
 (Pattern is identical — copy and adapt to lock at `p.lock`.)
 
-- [ ] **Step 3: Run — should PASS.**
+- [x] **Step 3: Run — should PASS.**
 
 ### Task 3.14: Review-mode pending recipes
 
-- [ ] **Step 1: Test in `test/recipe_pending_review.test.ts`** (create)
+- [x] **Step 1: Test in `test/recipe_pending_review.test.ts`** (create)
 
 ```typescript
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -2632,7 +2632,7 @@ describe("LlmRecipeProvider review mode", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should PASS** (impl already supports):
+- [x] **Step 2: Run — should PASS** (impl already supports):
 
 ```bash
 npx vitest run test/recipe_pending_review.test.ts 2>&1 | tail -10
@@ -2640,10 +2640,10 @@ npx vitest run test/recipe_pending_review.test.ts 2>&1 | tail -10
 
 ### Task 3.15: M3b quality gate
 
-- [ ] Full suite + typecheck.
-- [ ] `/simplify` on M3b diff.
-- [ ] `/codex-review` on M3b diff.
-- [ ] Checkpoint commit.
+- [x] Full suite + typecheck.
+- [x] `/simplify` on M3b diff.
+- [x] `/codex-review` on M3b diff.
+- [x] Checkpoint commit.
 
 ## M3c — Wire-in: WorkspaceManager, init.mjs, CLI, e2e
 
@@ -2653,7 +2653,7 @@ npx vitest run test/recipe_pending_review.test.ts 2>&1 | tail -10
 - Modify: `src/workspace/manager.ts` (add `recipeProvider` injection; export `SYMPHONY_RECIPE`)
 - Modify: `src/runtime.ts` (construct `LlmRecipeProvider` in `buildRuntimeComponents` when strategy is `llm`)
 
-- [ ] **Step 1: Failing test extending `workspace_manager.cache.test.ts`**
+- [x] **Step 1: Failing test extending `workspace_manager.cache.test.ts`**
 
 ```typescript
   it("exports SYMPHONY_RECIPE when recipeProvider returns a path", async () => {
@@ -2680,7 +2680,7 @@ npx vitest run test/recipe_pending_review.test.ts 2>&1 | tail -10
   });
 ```
 
-- [ ] **Step 2: Modify `manager.ts`**
+- [x] **Step 2: Modify `manager.ts`**
 
 Add `recipeProvider?` to constructor options. After the bare clone is computed, if `cache.strategy === "llm"` and a recipeProvider is configured, call `ensureRecipe` and set `env.SYMPHONY_RECIPE = result.recipePath`. If `result.recipePath` ends with `.pending`, also set `env.SYMPHONY_RECIPE_DISABLED = "1"`.
 
@@ -2698,14 +2698,14 @@ Engineer: this is the trickiest piece. Recommended sequence in `prepare()`:
 3. Spawn after_create hook with all env vars set
 ```
 
-- [ ] **Step 3: Run — should PASS:**
+- [x] **Step 3: Run — should PASS:**
 
 ### Task 3.17: `symphony recipe` CLI subcommand
 
 **Files:**
 - Modify: `src/cli.ts`
 
-- [ ] **Step 1: Failing test** in `test/cli_recipe.test.ts`:
+- [x] **Step 1: Failing test** in `test/cli_recipe.test.ts`:
 
 ```typescript
 import { describe, it, expect } from "vitest";
@@ -2728,18 +2728,18 @@ describe("symphony recipe CLI", () => {
 });
 ```
 
-- [ ] **Step 2: Implement subcommand router in `src/cli.ts`**
+- [x] **Step 2: Implement subcommand router in `src/cli.ts`**
 
 (Engineer: read current `cli.ts` for how subcommands are dispatched; add a `recipe` branch with `list` / `show` / `prune` / `approve` / `reject` / `regen` / `quarantine` actions. Each one maps to file-system operations on `~/.symphony-cache/recipes/`.)
 
-- [ ] **Step 3: Run — should PASS.**
+- [x] **Step 3: Run — should PASS.**
 
 ### Task 3.18: Wizard eager-bootstrap step
 
 **Files:**
 - Modify: `scripts/init.mjs` (insert eager bootstrap between Project pick and workflow author)
 
-- [ ] **Step 1: Add wizard step**
+- [x] **Step 1: Add wizard step**
 
 After Status field confirmation and before workflow-author invocation:
 
@@ -2776,9 +2776,9 @@ if (enableEagerBootstrap) {
 }
 ```
 
-- [ ] **Step 2: Test in `test/integration/wizard_eager_bootstrap.test.ts`** (created earlier).
+- [x] **Step 2: Test in `test/integration/wizard_eager_bootstrap.test.ts`** (created earlier).
 
-- [ ] **Step 3: Run.**
+- [x] **Step 3: Run.**
 
 ### Task 3.18b: Layer 4 — orchestrator integration with caching
 
@@ -2788,7 +2788,7 @@ if (enableEagerBootstrap) {
 This extends the existing orchestrator-level test pattern in
 `test/orchestrator.test.ts` with the new caching env vars in scope.
 
-- [ ] **Step 1: Write the test**
+- [x] **Step 1: Write the test**
 
 ```typescript
 // test/orchestrator.cache.test.ts
@@ -2866,7 +2866,7 @@ test that exercises one tick is preferred when the harness is reusable.
 Do not leave a vacuous assertion (`expect(true).toBe(true)` etc.) in
 place; the test must fail when the env vars are missing.
 
-- [ ] **Step 2: Run — should PASS once concrete fakes are wired:**
+- [x] **Step 2: Run — should PASS once concrete fakes are wired:**
 
 ```bash
 npx vitest run test/orchestrator.cache.test.ts 2>&1 | tail -10
@@ -2878,7 +2878,7 @@ npx vitest run test/orchestrator.cache.test.ts 2>&1 | tail -10
 - Create: `test/e2e/real_llm_bootstrap.test.ts`
 - Modify: `package.json` (add `"test:e2e": "vitest run test/e2e/"`)
 
-- [ ] **Step 1: Write gated test**
+- [x] **Step 1: Write gated test**
 
 ```typescript
 import { describe, it, expect } from "vitest";
@@ -2911,7 +2911,7 @@ describe.runIf(enabled)("e2e: real LLM bootstrap", () => {
 });
 ```
 
-- [ ] **Step 2: `package.json`**
+- [x] **Step 2: `package.json`**
 
 ```json
 "scripts": {
@@ -2919,7 +2919,7 @@ describe.runIf(enabled)("e2e: real LLM bootstrap", () => {
 }
 ```
 
-- [ ] **Step 3: Run with gate set:**
+- [x] **Step 3: Run with gate set:**
 
 ```bash
 SYMPHONY_E2E_LLM=1 npm run test:e2e 2>&1 | tail -10
@@ -2929,14 +2929,14 @@ Expected: PASS (with at least one of claude/codex on PATH).
 
 ### Task 3.20: Capture verification artifacts
 
-- [ ] **Step 1: Run a real wizard against a throwaway test Project**
+- [x] **Step 1: Run a real wizard against a throwaway test Project**
 
 ```bash
 mkdir -p docs/superpowers/runs
 ./scripts/init.sh --yes --project <test-project-url> 2>&1 | tee docs/superpowers/runs/2026-05-03-e2e-verification.md
 ```
 
-- [ ] **Step 2: Add artifacts to the same file**
+- [x] **Step 2: Add artifacts to the same file**
 
 ```bash
 cat ./WORKFLOW.md >> docs/superpowers/runs/2026-05-03-e2e-verification.md
@@ -2944,14 +2944,14 @@ ls -la ~/.symphony-cache/recipes/ >> docs/superpowers/runs/2026-05-03-e2e-verifi
 cat ~/.symphony-cache/recipes/*.sh >> docs/superpowers/runs/2026-05-03-e2e-verification.md
 ```
 
-- [ ] **Step 3: Time cold vs warm dispatch**
+- [x] **Step 3: Time cold vs warm dispatch**
 
 ```bash
 time node dist/src/cli.js --workflow ./WORKFLOW.md --once 2>&1 | tee -a docs/superpowers/runs/2026-05-03-e2e-verification.md
 time node dist/src/cli.js --workflow ./WORKFLOW.md --once 2>&1 | tee -a docs/superpowers/runs/2026-05-03-e2e-verification.md
 ```
 
-- [ ] **Step 4: Codex-only verification**
+- [x] **Step 4: Codex-only verification**
 
 Temporarily mask claude:
 
@@ -2963,11 +2963,11 @@ Confirm a recipe was generated and `manifest.generatedBy: "codex"`.
 
 ### Task 3.21: M3 final quality gate
 
-- [ ] Full suite + typecheck.
-- [ ] `/simplify` on full M3 diff.
-- [ ] `/codex-review` on full M3 diff. Iterate until clean.
-- [ ] Add `docs/CACHING.md` operator guide (200-400 words covering the env vars, recipe location, the `symphony recipe` CLI, and the consent model).
-- [ ] Commit + open PR
+- [x] Full suite + typecheck.
+- [x] `/simplify` on full M3 diff.
+- [x] `/codex-review` on full M3 diff. Iterate until clean.
+- [x] Add `docs/CACHING.md` operator guide (200-400 words covering the env vars, recipe location, the `symphony recipe` CLI, and the consent model).
+- [x] Commit + open PR
 
 ```bash
 git add src/workspace/recipes.ts src/workspace/manager.ts src/runtime.ts src/cli.ts \
