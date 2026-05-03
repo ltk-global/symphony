@@ -5,9 +5,9 @@
 // the spec preamble/postamble forced around the body. A flock around the
 // generation phase makes concurrent prepares share work for the same repoId.
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile, stat } from "node:fs/promises";
+import { mkdir, readFile, writeFile, stat, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve, dirname, sep } from "node:path";
 import { createHash } from "node:crypto";
 import { validateRecipe, type RecipeManifest } from "./recipe_validator.js";
 import { withLock } from "./_lock.js";
@@ -210,6 +210,8 @@ fi
 //
 // inputFiles affect the recipe via content (read + hashed).
 // discoveryFiles affect it via presence only.
+// Both arrays are gated by realpath()-confined-to-rootDir so symlinks
+// can't escape the checkout.
 export async function computeInputHash(
   rootDir: string,
   inputFiles: string[],
@@ -217,10 +219,21 @@ export async function computeInputHash(
 ): Promise<string> {
   const sortedInputs = [...inputFiles].sort();
   const sortedDiscovery = [...discoveryFiles].sort();
+  const rootReal = await realpath(rootDir).catch(() => null);
+  const insideRoot = async (rel: string): Promise<string | null> => {
+    if (rootReal === null) return null;
+    try {
+      const p = await realpath(join(rootDir, rel));
+      if (p === rootReal || p.startsWith(rootReal + sep)) return p;
+    } catch {}
+    return null;
+  };
   const reads = await Promise.all(
     sortedInputs.map(async (rel) => {
+      const safe = await insideRoot(rel);
+      if (safe === null) return { rel, buf: null as Buffer | null };
       try {
-        return { rel, buf: await readFile(join(rootDir, rel)) };
+        return { rel, buf: await readFile(safe) };
       } catch {
         return { rel, buf: null as Buffer | null };
       }
@@ -238,8 +251,13 @@ export async function computeInputHash(
   }
   h.update("\0discovery\0");
   for (const rel of sortedDiscovery) {
+    const safe = await insideRoot(rel);
+    if (safe === null) {
+      h.update(rel + "\0__missing__\0");
+      continue;
+    }
     try {
-      await stat(join(rootDir, rel));
+      await stat(safe);
       h.update(rel + "\0__present__\0");
     } catch {
       h.update(rel + "\0__missing__\0");

@@ -195,12 +195,12 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
   }
 
   // Bash treats `\<newline>` and trailing `|<newline>` as pipeline
-  // continuations, and `#` is a comment ONLY when it's at line-start or
-  // preceded by whitespace (mid-word `#` like `http://x#frag` or
-  // `echo ok#tag` is literal). Strip line-start/whitespace-prefixed
-  // comments, then collapse continuations.
+  // continuations. `#` starts a comment when at line-start, after
+  // whitespace, OR immediately after a control operator (`|#`, `;#`,
+  // `&#`, `(#`, `)#`) — bash starts a new word boundary at those.
+  // Mid-word `#` (URL fragment, `ok#tag`) is still literal.
   const joinedBody = body
-    .replace(/(^|\s)#[^\n]*/g, "$1")
+    .replace(/(^|[\s|;&()])#[^\n]*/g, "$1")
     .replace(/\\\n/g, "")
     .replace(/\|\s*\n\s*/g, "| ");
 

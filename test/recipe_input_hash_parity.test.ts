@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { computeInputHash as computeInputHashTs } from "../src/workspace/recipes.js";
@@ -75,5 +75,26 @@ describe("computeInputHash parity (mjs ↔ ts)", () => {
     writeFileSync(join(dir, "yarn.lock"), "v2-changed-but-still-present");
     const after = await computeInputHashTs(dir, files, discovery);
     expect(before).toBe(after);
+  });
+
+  it("treats symlink-out-of-checkout inputs as missing (no host file read)", async () => {
+    // Create an outside-checkout file the symlink will point at.
+    const outsideDir = mkdtempSync(join(tmpdir(), "sym-hash-outside-"));
+    try {
+      const secret = join(outsideDir, "secret.txt");
+      writeFileSync(secret, "TOP-SECRET");
+      symlinkSync(secret, join(dir, "package-lock.json"));
+      const files = ["package-lock.json"];
+      // Both ts + mjs treat the symlink target as missing because realpath
+      // resolves outside rootDir.
+      const ts = await computeInputHashTs(dir, files);
+      const mjs = await computeInputHashMjs(dir, files);
+      expect(ts).toBe(mjs);
+      // Same hash as if package-lock.json simply didn't exist.
+      const baseline = await computeInputHashTs(dir, ["package-lock.json"]);
+      expect(ts).toBe(baseline);
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
   });
 });

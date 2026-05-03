@@ -154,4 +154,34 @@ describe("authorRecipe — fallback paths", () => {
     expect(out.fallback).toBe(true);
     expect(out.reason).toBe("unsafe_manifest_path");
   });
+
+  it("rejects manifest missing inputFiles entirely", async () => {
+    const out = await authorRecipe({
+      context: { repoFullName: "x/x", repoId: "X" },
+      repoCheckoutDir: repo,
+      runSkillImpl: async () =>
+        JSON.stringify({
+          schema: "symphony.recipe.v1",
+          body: "npm ci",
+          manifest: { discoveryFiles: [], cacheKeys: [], lfs: false, submodules: false, notes: "" },
+        }),
+    });
+    expect(out.fallback).toBe(true);
+    expect(out.reason).toBe("parse_failed");
+  });
+
+  it("rejects manifest with non-array discoveryFiles", async () => {
+    const out = await authorRecipe({
+      context: { repoFullName: "x/x", repoId: "X" },
+      repoCheckoutDir: repo,
+      runSkillImpl: async () =>
+        JSON.stringify({
+          schema: "symphony.recipe.v1",
+          body: "npm ci",
+          manifest: { inputFiles: [], discoveryFiles: "yarn.lock", cacheKeys: [], lfs: false, submodules: false, notes: "" },
+        }),
+    });
+    expect(out.fallback).toBe(true);
+    expect(out.reason).toBe("parse_failed");
+  });
 });

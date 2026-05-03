@@ -10,8 +10,8 @@
 // context. Returns either { source: "llm", fallback: false, recipe,
 // manifest } or { source: null, fallback: true, reason } so the caller
 // can fall back to a canned template without throwing.
-import { readFile, stat } from "node:fs/promises";
-import { resolve, dirname, join } from "node:path";
+import { readFile, stat, realpath } from "node:fs/promises";
+import { resolve, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { runSkill, LlmUnavailableError } from "./llm-runner.mjs";
@@ -64,12 +64,16 @@ export async function authorRecipe({
     return { source: null, fallback: true, reason: "parse_failed" };
   }
 
-  const inputFiles = Array.isArray(parsed?.manifest?.inputFiles)
-    ? parsed.manifest.inputFiles
-    : [];
-  const discoveryFiles = Array.isArray(parsed?.manifest?.discoveryFiles)
-    ? parsed.manifest.discoveryFiles
-    : [];
+  // inputFiles + discoveryFiles are REQUIRED arrays per the skill contract.
+  // Treat missing/wrong-type as parse_failed rather than silently defaulting
+  // to [] (which would persist a degenerate inputHash that never invalidates
+  // on lockfile changes).
+  const m = parsed?.manifest ?? {};
+  if (!Array.isArray(m.inputFiles) || !Array.isArray(m.discoveryFiles)) {
+    return { source: null, fallback: true, reason: "parse_failed" };
+  }
+  const inputFiles = m.inputFiles;
+  const discoveryFiles = m.discoveryFiles;
   // Reject unsafe paths up front: hashing reads from the supplied checkout,
   // so an LLM-emitted `../../../etc/passwd` would otherwise reach files
   // outside it before validateRecipe runs. Mirrors the validator's
@@ -144,13 +148,27 @@ function extractJson(text) {
 //
 // inputFiles affect the recipe via content (read + hashed in sorted order).
 // discoveryFiles affect it via presence only (presence/absence sentinel).
+//
+// Both arrays are gated by realpath()-confined-to-rootDir so a symlinked
+// `package-lock.json -> /etc/passwd` can't escape the checkout.
 export async function computeInputHash(rootDir, inputFiles, discoveryFiles = []) {
   const sortedInputs = [...inputFiles].sort();
   const sortedDiscovery = [...discoveryFiles].sort();
+  const rootReal = await realpath(rootDir).catch(() => null);
+  const insideRoot = async (rel) => {
+    if (rootReal === null) return null;
+    try {
+      const p = await realpath(join(rootDir, rel));
+      if (p === rootReal || p.startsWith(rootReal + sep)) return p;
+    } catch {}
+    return null;
+  };
   const reads = await Promise.all(
     sortedInputs.map(async (rel) => {
+      const safe = await insideRoot(rel);
+      if (safe === null) return { rel, buf: null };
       try {
-        return { rel, buf: await readFile(join(rootDir, rel)) };
+        return { rel, buf: await readFile(safe) };
       } catch {
         return { rel, buf: null };
       }
@@ -170,8 +188,13 @@ export async function computeInputHash(rootDir, inputFiles, discoveryFiles = [])
   // the same path appears in both lists.
   h.update("\0discovery\0");
   for (const rel of sortedDiscovery) {
+    const safe = await insideRoot(rel);
+    if (safe === null) {
+      h.update(rel + "\0__missing__\0");
+      continue;
+    }
     try {
-      await stat(join(rootDir, rel));
+      await stat(safe);
       h.update(rel + "\0__present__\0");
     } catch {
       h.update(rel + "\0__missing__\0");
