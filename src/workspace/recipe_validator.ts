@@ -84,11 +84,13 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   // a word char immediately, which fails for the common `su - root` form.
   // Drop the trailing boundary on the `su -` branch.
   { pattern: /\b(sudo|doas)\b|\bsu\s+-/i, label: "sudo" },
-  // `service` takes `service <name> <action>` (action follows the unit
-  // name); systemctl/launchctl take `<cmd> <action> [unit]` (action follows
-  // the command). Cover both shapes.
-  { pattern: /\b(systemctl|launchctl)\s+(start|stop|restart|disable|enable|reload|reload-or-restart)\b|\bservice\s+\S+\s+(start|stop|restart|reload|reload-or-restart)\b/i, label: "system-service" },
-  { pattern: /\b(ssh|scp|rsync)\s+[^\n]*@/i, label: "ssh-out" },
+  // `service <name> <action>` and `systemctl/launchctl [flags] <action>`
+  // — both shapes covered, including leading flags like `systemctl --user
+  // start foo`. The `[^\n;&|]*\s` between cmd and action allows any flags.
+  { pattern: /\b(systemctl|launchctl)\b[^\n;&|]*\s(start|stop|restart|disable|enable|reload|reload-or-restart)\b|\bservice\s+\S+\s+(start|stop|restart|reload|reload-or-restart)\b/i, label: "system-service" },
+  // ssh/scp/rsync to a remote — covers user@host AND host:path forms (scp's
+  // default-user syntax is `host:path`; we forbid ALL outbound transfers).
+  { pattern: /\b(ssh|scp|rsync)\s+[^\n]*[:@]/i, label: "ssh-out" },
   { pattern: /\bcrontab\s+-/i, label: "crontab" },
   { pattern: /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:/i, label: "fork-bomb" },
   { pattern: />>?\s*\/etc\//i, label: "/etc/-write" },
@@ -189,11 +191,12 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
   //   - joinedBody: bash continuations + line comments collapsed so multi-
   //     line forms (`curl x |\nbash`, `curl x | #c\nbash`) line up.
   //   - quotelessBody: bash adjacent-quote concatenation
-  //     (`c'url' x | b'ash'`) lined up.
+  //     (`c'url' x | b'ash'`, `c$'url' x | b$'ash'`) lined up. The `\$?`
+  //     prefix on the strip catches ANSI-C / locale quoted forms.
   //   - unescapedBody: bash backslash-escape removal
   //     (`c\url`, `r\m`, `s\udo`) lined up.
   // OR of the views is the safety gate.
-  const quotelessBody = body.replace(/['"]/g, "");
+  const quotelessBody = body.replace(/\$?['"]/g, "");
   const unescapedBody = body.replace(/\\(.)/g, "$1");
   for (const rule of BLOCKLIST) {
     if (
