@@ -98,8 +98,11 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   // Reject ANY reference to ~ or $HOME in the body. The skill explicitly
   // forbids touching the runner's home directory; copy/mv/npm-config/etc.
   // forms (not redirects) were bypassing the home-write rule. Recipes use
-  // $WORKSPACE / $SYMPHONY_CACHE_DIR for everything mutable.
-  { pattern: /(\$\{?HOME\b|(?<![\w/.])~\/)/, label: "home-reference" },
+  // $WORKSPACE / $SYMPHONY_CACHE_DIR for everything mutable. The tilde
+  // alternation matches `~/path` AND bare `~` (when preceded by non-word
+  // and followed by whitespace/quote/end), but not `name~vsn` or
+  // `path/to/~/file` (where `~` is part of a longer identifier).
+  { pattern: /(\$\{?HOME\b|(?<![\w/.])~(?=[\s/'"]|$))/, label: "home-reference" },
 ];
 
 export function validateRecipe(body: unknown, manifest: RecipeManifest): ValidationResult {
@@ -180,17 +183,25 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
     .replace(/\\\n/g, "")
     .replace(/\|\s*\n\s*/g, "| ");
 
-  // Blocklist layer — run against three views of the body, each catching
+  // Blocklist layer — run against four views of the body, each catching
   // what the others miss:
   //   - body (raw): `#` inside quoted strings is preserved.
   //   - joinedBody: bash continuations + line comments collapsed so multi-
   //     line forms (`curl x |\nbash`, `curl x | #c\nbash`) line up.
   //   - quotelessBody: bash adjacent-quote concatenation
   //     (`c'url' x | b'ash'`) lined up.
-  // OR of the three is the safety gate.
+  //   - unescapedBody: bash backslash-escape removal
+  //     (`c\url`, `r\m`, `s\udo`) lined up.
+  // OR of the views is the safety gate.
   const quotelessBody = body.replace(/['"]/g, "");
+  const unescapedBody = body.replace(/\\(.)/g, "$1");
   for (const rule of BLOCKLIST) {
-    if (rule.pattern.test(joinedBody) || rule.pattern.test(body) || rule.pattern.test(quotelessBody)) {
+    if (
+      rule.pattern.test(joinedBody)
+      || rule.pattern.test(body)
+      || rule.pattern.test(quotelessBody)
+      || rule.pattern.test(unescapedBody)
+    ) {
       errors.push(`blocklist: ${rule.label}`);
     }
   }
