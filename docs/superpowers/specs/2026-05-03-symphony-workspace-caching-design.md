@@ -543,6 +543,14 @@ includes:
    recipe.
 6. **Run the full test suite at every checkpoint during implementation**
    (per operator's request). `npm test` must stay green between checkpoints.
+7. **Run `/simplify` and `/codex-review` after every major step**, not at
+   the end. `/simplify` catches over-engineering / duplication / YAGNI
+   violations on the diff just produced. `/codex-review` runs an
+   independent iterative review via codex-cli against the base branch,
+   fixing issues until clean. A "major step" means each numbered milestone
+   in the plan (one per layer / PR / logical checkpoint), not each
+   individual test or function. Both passes must complete cleanly before a
+   step is considered done.
 
 ## Out of scope for v0 (revisit in v1)
 
