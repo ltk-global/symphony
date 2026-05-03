@@ -39,6 +39,8 @@ Return exactly one JSON object. No prose, no markdown fences, no commentary.
 }
 ```
 
+> Symphony fills in the persistence-level fields (`schema` inside the manifest, `repoId`, `repoFullName`, `generatedBy`, `generatedAt`, `inputHash`) from server-side context after parsing your output. Don't include them in the `manifest` object — they'll be added before the manifest is validated and written to disk.
+
 ### `body` rules
 
 - Bash. Will be wrapped by Symphony in a forced preamble (`set -euo pipefail`, `cd "$WORKSPACE"`) and postamble (`exit 0`). DON'T include those yourself.
