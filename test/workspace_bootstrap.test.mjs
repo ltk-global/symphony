@@ -124,4 +124,34 @@ describe("authorRecipe — fallback paths", () => {
     expect(out.fallback).toBe(true);
     expect(out.reason).toBe("parse_failed");
   });
+
+  it("rejects manifest paths that escape the checkout (no fs read)", async () => {
+    const out = await authorRecipe({
+      context: { repoFullName: "x/x", repoId: "X" },
+      repoCheckoutDir: repo,
+      runSkillImpl: async () =>
+        JSON.stringify({
+          schema: "symphony.recipe.v1",
+          body: "npm ci",
+          manifest: { inputFiles: ["../.env"], discoveryFiles: [], cacheKeys: [], lfs: false, submodules: false, notes: "" },
+        }),
+    });
+    expect(out.fallback).toBe(true);
+    expect(out.reason).toBe("unsafe_manifest_path");
+  });
+
+  it("rejects absolute manifest paths in discoveryFiles", async () => {
+    const out = await authorRecipe({
+      context: { repoFullName: "x/x", repoId: "X" },
+      repoCheckoutDir: repo,
+      runSkillImpl: async () =>
+        JSON.stringify({
+          schema: "symphony.recipe.v1",
+          body: "npm ci",
+          manifest: { inputFiles: [], discoveryFiles: ["/etc/passwd"], cacheKeys: [], lfs: false, submodules: false, notes: "" },
+        }),
+    });
+    expect(out.fallback).toBe(true);
+    expect(out.reason).toBe("unsafe_manifest_path");
+  });
 });

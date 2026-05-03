@@ -70,6 +70,13 @@ export async function authorRecipe({
   const discoveryFiles = Array.isArray(parsed?.manifest?.discoveryFiles)
     ? parsed.manifest.discoveryFiles
     : [];
+  // Reject unsafe paths up front: hashing reads from the supplied checkout,
+  // so an LLM-emitted `../../../etc/passwd` would otherwise reach files
+  // outside it before validateRecipe runs. Mirrors the validator's
+  // isSafeRelativePath rule.
+  if (!inputFiles.every(isSafeRelativePath) || !discoveryFiles.every(isSafeRelativePath)) {
+    return { source: null, fallback: true, reason: "unsafe_manifest_path" };
+  }
   const inputHash = await computeInputHash(repoCheckoutDir, inputFiles, discoveryFiles);
 
   const manifest = {
@@ -116,6 +123,12 @@ function buildMessage(context, repoDir) {
     "",
     "Output the JSON directly — no surrounding prose, no code fences.",
   ].join("\n");
+}
+
+function isSafeRelativePath(p) {
+  if (typeof p !== "string" || p.length === 0) return false;
+  if (p.startsWith("/")) return false;
+  return !p.split("/").some((seg) => seg === "..");
 }
 
 function extractJson(text) {
