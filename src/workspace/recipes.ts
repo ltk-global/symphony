@@ -82,12 +82,21 @@ export class LlmRecipeProvider {
       sh: join(dir, `${stem}.sh`),
       json: join(dir, `${stem}.json`),
       lock: join(dir, `${stem}.lock`),
+      quarantined: join(dir, `${stem}.quarantined`),
     };
   }
 
   async ensureRecipe(input: EnsureInput): Promise<EnsureResult> {
     const p = this.paths(input.repoId);
     await mkdir(dirname(p.sh), { recursive: true });
+
+    // Quarantine short-circuit: an operator-placed `.quarantined` marker
+    // means "stop authoring; fall back to canned template until cleared
+    // via `symphony recipe regen`." Without this check, the missing .sh
+    // would look like a cache miss and the LLM would silently re-author.
+    if (existsSync(p.quarantined)) {
+      return await this.writeFallback(p, input);
+    }
 
     // Lock-free fast path: cache hit short-circuits before we contend.
     // In review mode, a previously-written `.pending` pair counts as
@@ -99,6 +108,10 @@ export class LlmRecipeProvider {
     if (cached) return cached;
 
     return await withLock(p.lock, { errorPrefix: "recipe_lock_timeout" }, async () => {
+      // Re-check quarantine inside the lock too.
+      if (existsSync(p.quarantined)) {
+        return await this.writeFallback(p, input);
+      }
       // Re-check inside the lock — a concurrent caller may have just generated.
       const cachedInside = await this.tryLoadCached(p.sh, p.json, input)
         ?? (this.reviewRequired

@@ -148,7 +148,11 @@ export class WorkspaceManager {
     if (!issue.repoFullName) return;
     try {
       const result = await this.recipeProvider.ensureRecipe({
-        repoId: sanitizeWorkspaceKey(issue.repoFullName),
+        // Use repoFullName as the cache key on both sides (daemon + wizard
+        // eager bootstrap). recipeStem() sanitizes internally and includes
+        // a hash suffix; double-sanitizing here would diverge from the
+        // wizard's lookup key.
+        repoId: issue.repoFullName,
         repoFullName: issue.repoFullName,
         repoCheckoutDir: workspaceDir,
       });

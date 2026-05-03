@@ -101,8 +101,11 @@ describe("WorkspaceManager cache integration", () => {
 
   it("strategy=llm with recipeProvider exports SYMPHONY_RECIPE in cacheEnv after prepare", async () => {
     const fakeRecipePath = join(cacheDir, "recipes", "stub.sh");
+    let observedRepoId: string | null = null;
     const recipeProvider = {
-      ensureRecipe: async (input: { repoId: string; repoFullName: string; repoCheckoutDir: string }) => ({
+      ensureRecipe: async (input: { repoId: string; repoFullName: string; repoCheckoutDir: string }) => {
+        observedRepoId = input.repoId;
+        return ({
         recipePath: fakeRecipePath,
         manifest: {
           schema: "symphony.recipe.v1",
@@ -121,7 +124,8 @@ describe("WorkspaceManager cache integration", () => {
           approvedAt: null,
         },
         generated: true,
-      }),
+      });
+      },
     };
     const manager = new WorkspaceManager({
       root: workspaceRoot,
@@ -135,6 +139,10 @@ describe("WorkspaceManager cache integration", () => {
     const ws = await manager.prepare({ issue: issue(), attempt: null });
     expect(ws.cacheEnv?.SYMPHONY_RECIPE).toBe(fakeRecipePath);
     expect(ws.cacheEnv?.SYMPHONY_RECIPE_DISABLED).toBeUndefined();
+    // The repoId passed to ensureRecipe must match what the wizard would
+    // pass — the un-sanitized repoFullName — so eager-bootstrap recipes
+    // and lazy daemon recipes share the same cache entry.
+    expect(observedRepoId).toBe(issue().repoFullName);
   });
 
   it("strategy=llm with .pending recipePath also sets SYMPHONY_RECIPE_DISABLED=1", async () => {

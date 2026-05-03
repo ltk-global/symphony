@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, statSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { LlmRecipeProvider } from "../src/workspace/recipes.js";
@@ -208,5 +208,31 @@ describe("LlmRecipeProvider", () => {
     const r2 = await p.ensureRecipe({ repoId: "MAL", repoFullName: "x/x", repoCheckoutDir: repo });
     expect(r2.generated).toBe(true);
     expect(goodAuthor).toHaveBeenCalledTimes(1);
+  });
+
+  it("honors a `.quarantined` marker — falls back to canned template, never re-authors", async () => {
+    const p = new LlmRecipeProvider({ cacheRoot, author: goodAuthor as any });
+    goodAuthor.mockImplementation(async (input: any) => {
+      const { computeInputHash } = await import("../src/workspace/recipes.js");
+      return {
+        source: "llm",
+        fallback: false,
+        recipe: "npm ci",
+        manifest: {
+          ...baseManifest,
+          inputHash: await computeInputHash(input.repoCheckoutDir, ["package-lock.json"]),
+        },
+      };
+    });
+    // Drop a quarantine marker into the cache layout the provider expects.
+    const { recipeStem } = await import("../src/workspace/recipes.js");
+    const stem = recipeStem("Q1");
+    const dir = join(cacheRoot, "recipes");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${stem}.quarantined`), JSON.stringify({ schema: "symphony.recipe.v1" }));
+
+    const r = await p.ensureRecipe({ repoId: "Q1", repoFullName: "x/x", repoCheckoutDir: repo });
+    expect(r.manifest.generatedBy).toBe("fallback-template");
+    expect(goodAuthor).toHaveBeenCalledTimes(0);
   });
 });

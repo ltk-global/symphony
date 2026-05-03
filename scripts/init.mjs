@@ -822,7 +822,11 @@ async function eagerBootstrapRecipe(repoFullName, repoId, token) {
       author: async () => result, // already-computed; provider reuses the value
       reviewRequired: false,
     });
-    const persisted = await provider.ensureRecipe({ repoId, repoFullName, repoCheckoutDir: tmp });
+    // Use repoFullName as the cache key — must match what
+    // WorkspaceManager passes (recipeStem sanitizes internally; passing
+    // the GitHub node ID here would store under a stem the daemon never
+    // looks up, missing the warm-cache path).
+    const persisted = await provider.ensureRecipe({ repoId: repoFullName, repoFullName, repoCheckoutDir: tmp });
     ok(`recipe written to ${persisted.recipePath}`);
   } catch (error) {
     warn(`eager bootstrap failed: ${error instanceof Error ? error.message : error}`);
