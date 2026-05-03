@@ -39,7 +39,14 @@ export interface ServiceConfig {
     };
   };
   polling: { intervalMs: number };
-  workspace: { root: string };
+  workspace: {
+    root: string;
+    cache: {
+      strategy: "llm" | "reference_only" | "none";
+      reviewRequired: boolean;
+      recipeTtlHours: number;
+    };
+  };
   hooks: {
     afterCreate?: string;
     beforeRun?: string;
@@ -148,7 +155,10 @@ export function buildConfig(
       },
     },
     polling: { intervalMs: positiveNumberValue(raw.polling?.interval_ms, 30_000, "invalid_polling_interval_ms") },
-    workspace: { root: pathValue(raw.workspace?.root, join(tmpdir(), "symphony_workspaces"), env, baseDir) },
+    workspace: {
+      root: pathValue(raw.workspace?.root, join(tmpdir(), "symphony_workspaces"), env, baseDir),
+      cache: parseWorkspaceCache(recordValue(raw.workspace, "cache")),
+    },
     hooks: {
       afterCreate: optionalString(raw.hooks?.after_create),
       beforeRun: optionalString(raw.hooks?.before_run),
@@ -204,6 +214,22 @@ export function buildConfig(
     verify: raw.verify ?? {},
     server: buildServerConfig(raw.server),
   };
+}
+
+function parseWorkspaceCache(raw: unknown): ServiceConfig["workspace"]["cache"] {
+  const record = (raw && typeof raw === "object" && !Array.isArray(raw)) ? (raw as Record<string, unknown>) : {};
+  const strategyRaw = record.strategy;
+  let strategy: "llm" | "reference_only" | "none" = "llm";
+  if (strategyRaw !== undefined && strategyRaw !== null) {
+    if (strategyRaw === "llm" || strategyRaw === "reference_only" || strategyRaw === "none") {
+      strategy = strategyRaw;
+    } else {
+      throw new Error("invalid_workspace_cache_strategy");
+    }
+  }
+  const reviewRequired = booleanValue(record.review_required, false);
+  const recipeTtlHours = positiveNumberValue(record.recipe_ttl_hours, 168, "invalid_workspace_cache_recipe_ttl_hours");
+  return { strategy, reviewRequired, recipeTtlHours };
 }
 
 function parseEventHooks(raw: unknown): ServiceConfig["hooks"]["onEvent"] {

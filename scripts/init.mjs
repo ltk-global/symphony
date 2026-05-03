@@ -800,11 +800,14 @@ function renderWorkflow(opts) {
   lines.push("hooks:");
   lines.push("  after_create: |");
   lines.push("    set -euo pipefail");
-  lines.push("    if [ -z \"${ISSUE_REPO_FULL_NAME:-}\" ]; then");
-  lines.push("      echo 'no ISSUE_REPO_FULL_NAME (likely a draft item); skipping clone' >&2");
-  lines.push("      exit 0");
+  lines.push("    if [ -z \"${ISSUE_REPO_FULL_NAME:-}\" ]; then exit 0; fi");
+  lines.push("    if [ -n \"${SYMPHONY_REPO_REF:-}\" ] && [ -d \"$SYMPHONY_REPO_REF\" ]; then");
+  lines.push("      git clone --reference \"$SYMPHONY_REPO_REF\" \\");
+  lines.push("        \"https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git\" . \\");
+  lines.push("        || git clone \"https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git\" .");
+  lines.push("    else");
+  lines.push("      git clone \"https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git\" .");
   lines.push("    fi");
-  lines.push("    git clone \"https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git\" .");
   lines.push("    git checkout -B \"${ISSUE_BRANCH_NAME:-symphony/${ISSUE_WORKSPACE_KEY}}\"");
   lines.push("");
   lines.push("agent:");
