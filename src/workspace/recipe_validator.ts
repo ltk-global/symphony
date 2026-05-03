@@ -58,6 +58,8 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   // Process substitution: `bash <(curl …)` and `sh < <(wget …)` are
   // remote-code-execution forms equivalent to pipe-to-shell.
   { pattern: /\b(bash|sh|zsh)\b[^\n]*<\s*\(?\s*(curl|wget|fetch)\b/i, label: "process-substitution-to-shell" },
+  // `bash -c "$(curl …)"` (and sh/zsh equivalents) — same RCE shape.
+  { pattern: /\b(bash|sh|zsh)\b\s+-c\s+[^\n]*\b(curl|wget|fetch)\b/i, label: "shell-c-remote-fetch" },
   // Catch backtick command substitution (`eval \`...\``) as well as the
   // quote-/`$`-prefixed forms.
   { pattern: /\beval\s+["'$`]/, label: "eval-of-dynamic-input" },
@@ -93,6 +95,11 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   // Block redirects to home — `> ~/.npmrc`, `>> $HOME/.bashrc`, etc.
   // would mutate the runner's persistent user environment.
   { pattern: />>?\s*["']?(~|\$\{?HOME\b)/i, label: "home-write" },
+  // Reject ANY reference to ~ or $HOME in the body. The skill explicitly
+  // forbids touching the runner's home directory; copy/mv/npm-config/etc.
+  // forms (not redirects) were bypassing the home-write rule. Recipes use
+  // $WORKSPACE / $SYMPHONY_CACHE_DIR for everything mutable.
+  { pattern: /(\$\{?HOME\b|(?<![\w/.])~\/)/, label: "home-reference" },
 ];
 
 export function validateRecipe(body: unknown, manifest: RecipeManifest): ValidationResult {
