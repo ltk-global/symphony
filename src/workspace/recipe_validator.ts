@@ -188,39 +188,34 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
     .replace(/\\\n/g, "")
     .replace(/\|\s*\n\s*/g, "| ");
 
-  // Blocklist layer — run against four views of the body, each catching
-  // what the others miss:
-  //   - body (raw): `#` inside quoted strings is preserved.
-  //   - joinedBody: bash continuations + line comments collapsed so multi-
-  //     line forms (`curl x |\nbash`, `curl x | #c\nbash`) line up.
-  //   - quotelessBody: bash adjacent-quote concatenation
-  //     (`c'url' x | b'ash'`, `c$'url' x | b$'ash'`) lined up. The `\$?`
-  //     prefix on the strip catches ANSI-C / locale quoted forms.
-  //   - unescapedBody: bash backslash-escape removal
-  //     (`c\url`, `r\m`, `s\udo`) lined up.
-  // OR of the views is the safety gate.
+  // Blocklist + secret scan run against multiple views of the body, each
+  // catching what the others miss. The `combinedBody` view applies both
+  // quote-strip AND escape-removal so a body that mixes mechanisms
+  // (`c\ur'l' x | b'as'h`) is normalized in a single pass.
+  //   - body (raw): `#` inside quoted strings; persisted artifact.
+  //   - joinedBody: bash continuations + line comments collapsed.
+  //   - quotelessBody: adjacent-quote concat (incl. ANSI-C `$'…'`).
+  //   - unescapedBody: backslash-escape removal.
+  //   - combinedBody: quotes AND escapes stripped together.
+  // Apply OR of all views as the safety gate.
   const quotelessBody = body.replace(/\$?['"]/g, "");
   const unescapedBody = body.replace(/\\(.)/g, "$1");
+  const combinedBody = quotelessBody.replace(/\\(.)/g, "$1");
+  const views = [body, joinedBody, quotelessBody, unescapedBody, combinedBody];
   for (const rule of BLOCKLIST) {
-    if (
-      rule.pattern.test(joinedBody)
-      || rule.pattern.test(body)
-      || rule.pattern.test(quotelessBody)
-      || rule.pattern.test(unescapedBody)
-    ) {
+    if (views.some((v) => rule.pattern.test(v))) {
       errors.push(`blocklist: ${rule.label}`);
     }
   }
 
-  // Secret-scan layer — scan the raw body (the persisted artifact, comments
-  // and all) plus the manifest text. The joined-body normalization for
-  // blocklist matching strips comments; tokens hiding in comments must
-  // still be caught because they end up on disk verbatim.
+  // Secret-scan layer — same view set as the blocklist plus the manifest
+  // text. Tokens split by adjacent quoting (`ghp_abcd…'efgh…'`) need the
+  // quoteless/combined views; tokens in comments need the raw body view.
   const manifestText = (() => {
     try { return JSON.stringify(manifest); } catch { return ""; }
   })();
   for (const s of SECRET_PATTERNS) {
-    if (s.pattern.test(body) || s.pattern.test(manifestText)) {
+    if (views.some((v) => s.pattern.test(v)) || s.pattern.test(manifestText)) {
       errors.push(`secret-scan: ${s.name} detected — never inline tokens`);
     }
   }
