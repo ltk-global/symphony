@@ -195,19 +195,22 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
     .replace(/\|\s*\n\s*/g, "| ");
 
   // Blocklist + secret scan run against multiple views of the body, each
-  // catching what the others miss. The `combinedBody` view applies both
-  // quote-strip AND escape-removal so a body that mixes mechanisms
-  // (`c\ur'l' x | b'as'h`) is normalized in a single pass.
+  // catching what the others miss. The `fullyNormalizedBody` view applies
+  // every transformation cumulatively so adversarial bodies that mix
+  // continuations + quotes + escapes (`c'url' x |\n b'as'h`) get all of
+  // them collapsed before pattern matching.
   //   - body (raw): `#` inside quoted strings; persisted artifact.
   //   - joinedBody: bash continuations + line comments collapsed.
   //   - quotelessBody: adjacent-quote concat (incl. ANSI-C `$'…'`).
   //   - unescapedBody: backslash-escape removal.
   //   - combinedBody: quotes AND escapes stripped together.
+  //   - fullyNormalizedBody: comments + continuations + quotes + escapes.
   // Apply OR of all views as the safety gate.
   const quotelessBody = body.replace(/\$?['"]/g, "");
   const unescapedBody = body.replace(/\\(.)/g, "$1");
   const combinedBody = quotelessBody.replace(/\\(.)/g, "$1");
-  const views = [body, joinedBody, quotelessBody, unescapedBody, combinedBody];
+  const fullyNormalizedBody = joinedBody.replace(/\$?['"]/g, "").replace(/\\(.)/g, "$1");
+  const views = [body, joinedBody, quotelessBody, unescapedBody, combinedBody, fullyNormalizedBody];
   for (const rule of BLOCKLIST) {
     if (views.some((v) => rule.pattern.test(v))) {
       errors.push(`blocklist: ${rule.label}`);
