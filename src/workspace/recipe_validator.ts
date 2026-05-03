@@ -105,10 +105,9 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   // Block redirects through $WORKSPACE-prefixed traversal: `> $WORKSPACE/../x`.
   { pattern: />>?\|?\s*["']?\$\{?WORKSPACE\}?\/+\.\./i, label: "absolute-write" },
   // Block filesystem-mutating commands writing to an absolute destination.
-  // `tee` only needs `tee /path` (it reads from stdin which may come from a
-  // prior pipe), so don't require a preceding operand for it.
-  { pattern: /\b(cp|mv|install|mkdir|chmod|chown|ln|rmdir)\s+[^\n;&|]*\s["']?\/(?!dev\/(?:null|stderr|stdout)\b)[A-Za-z]/i, label: "absolute-write" },
-  { pattern: /\b(tee|touch)\b[^\n;&|]*\s["']?\/(?!dev\/(?:null|stderr|stdout)\b)[A-Za-z]/i, label: "absolute-write" },
+  // `(?:\S+\s+)*` allows zero or more intermediate operands so single-arg
+  // forms (`mkdir /tmp/x`) AND flagged forms (`cp -r src /tmp/x`) both match.
+  { pattern: /\b(cp|mv|install|mkdir|chmod|chown|ln|rmdir|tee|touch)\s+(?:\S+\s+)*["']?\/(?!dev\/(?:null|stderr|stdout)\b)[A-Za-z]/i, label: "absolute-write" },
   // Block filesystem-mutating commands writing to a parent-relative path
   // OR through $WORKSPACE traversal.
   { pattern: /\b(cp|mv|install|tee|touch|mkdir|chmod|chown|ln|rmdir)\b[^\n;&|]*\s["']?(\.\.\/|\$\{?WORKSPACE\}?\/+\.\.)/i, label: "absolute-write" },

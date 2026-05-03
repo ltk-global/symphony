@@ -246,6 +246,8 @@ const BLOCKLIST_CASES: Array<[string, RegExp | null, string]> = [
   ["chmod 644 /etc/passwd", /absolute-write/i, "chmod absolute"],
   ["chown root /var/log/foo", /absolute-write/i, "chown absolute"],
   ["ln -s /tmp/x /usr/local/bin/y", /absolute-write/i, "ln absolute target"],
+  ["mkdir /tmp/cache", /absolute-write/i, "mkdir single-operand absolute"],
+  ["rmdir /tmp/cache", /absolute-write/i, "rmdir single-operand absolute"],
   ["echo > /dev/null", null, "/dev/null is allowed"],
   ["pnpm test 2> /dev/stderr", null, "/dev/stderr is allowed"],
   ["echo x > ~/.npmrc", /home-write/i, "redirect to ~"],
