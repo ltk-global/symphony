@@ -18,8 +18,10 @@ export interface WorkspaceIssueInput {
   branchName?: string | null;
 }
 
+export type WorkspaceCacheStrategy = "llm" | "reference_only" | "none";
+
 export interface WorkspaceCacheOptions {
-  strategy: "llm" | "reference_only" | "none";
+  strategy: WorkspaceCacheStrategy;
   reviewRequired: boolean;
   recipeTtlHours: number;
 }
@@ -43,6 +45,9 @@ export interface WorkspaceRef {
   path: string;
   afterCreateOutput?: string;
   envSnapshot?: Record<string, string | undefined>;
+  // Cached cache-env (SYMPHONY_CACHE_DIR + SYMPHONY_REPO_REF). Set by prepare()
+  // so beforeRun/afterRun/remove don't redo the bare-clone fetch each call.
+  cacheEnv?: Record<string, string | undefined>;
 }
 
 const DEFAULT_CACHE: WorkspaceCacheOptions = {
@@ -85,7 +90,7 @@ export class WorkspaceManager {
       if (!isNodeError(error) || error.code !== "EEXIST") throw error;
     }
 
-    const extraEnv = await this.computeCacheEnv(input.issue);
+    const cacheEnv = await this.computeCacheEnv(input.issue);
 
     if (created) {
       try {
@@ -95,26 +100,26 @@ export class WorkspaceManager {
           input.issue,
           key,
           input.attempt,
-          extraEnv,
+          cacheEnv,
         );
-        return { key, path, afterCreateOutput: result.stdout, envSnapshot: result.envSnapshot };
+        return { key, path, afterCreateOutput: result.stdout, envSnapshot: result.envSnapshot, cacheEnv };
       } catch (error) {
         await rm(path, { recursive: true, force: true });
         throw error;
       }
     }
-    return { key, path, envSnapshot: { ...extraEnv } };
+    return { key, path, envSnapshot: { ...cacheEnv }, cacheEnv };
   }
 
   async beforeRun(workspace: WorkspaceRef, issue: WorkspaceIssueInput, attempt: number | null): Promise<void> {
-    const extraEnv = await this.computeCacheEnv(issue);
-    await this.runHook(this.hooks.beforeRun, workspace.path, issue, workspace.key, attempt, extraEnv);
+    const cacheEnv = workspace.cacheEnv ?? await this.computeCacheEnv(issue);
+    await this.runHook(this.hooks.beforeRun, workspace.path, issue, workspace.key, attempt, cacheEnv);
   }
 
   async afterRun(workspace: WorkspaceRef, issue: WorkspaceIssueInput, attempt: number | null): Promise<void> {
     try {
-      const extraEnv = await this.computeCacheEnv(issue);
-      await this.runHook(this.hooks.afterRun, workspace.path, issue, workspace.key, attempt, extraEnv);
+      const cacheEnv = workspace.cacheEnv ?? await this.computeCacheEnv(issue);
+      await this.runHook(this.hooks.afterRun, workspace.path, issue, workspace.key, attempt, cacheEnv);
     } catch (error) {
       log.warn({ error, issue_id: issue.id, issue_identifier: issue.identifier }, "after_run hook failed");
       return;
@@ -123,8 +128,8 @@ export class WorkspaceManager {
 
   async remove(workspace: WorkspaceRef, issue: WorkspaceIssueInput): Promise<void> {
     try {
-      const extraEnv = await this.computeCacheEnv(issue);
-      await this.runHook(this.hooks.beforeRemove, workspace.path, issue, workspace.key, null, extraEnv);
+      const cacheEnv = workspace.cacheEnv ?? await this.computeCacheEnv(issue);
+      await this.runHook(this.hooks.beforeRemove, workspace.path, issue, workspace.key, null, cacheEnv);
     } catch (error) {
       log.warn({ error, issue_id: issue.id, issue_identifier: issue.identifier }, "before_remove hook failed");
     }
@@ -149,12 +154,28 @@ export class WorkspaceManager {
     };
     if (this.cache.strategy === "none") return env;
     if (!issue.repoFullName) return env;
+    const isPath = isAbsolute(issue.repoFullName);
+    const token = process.env.GITHUB_TOKEN;
+    if (!isPath && !token) {
+      log.warn(
+        { issue_id: issue.id, issue_identifier: issue.identifier, repo: issue.repoFullName },
+        "missing_github_token_skipping_reference_clone",
+      );
+      return env;
+    }
     try {
       const repoId = sanitizeWorkspaceKey(issue.repoFullName);
-      const cloneUrl = isAbsolute(issue.repoFullName)
+      // Use the public clone URL (no token) so it's safe to persist in the
+      // bare's remote.origin.url. Auth is supplied per-invocation via
+      // `git -c http.extraHeader=...` so the token never lands on disk.
+      const cloneUrl = isPath
         ? issue.repoFullName
-        : `https://x-access-token:${process.env.GITHUB_TOKEN ?? ""}@github.com/${issue.repoFullName}.git`;
-      const refPath = await ensureBareClone(repoId, cloneUrl, this.refsOptions);
+        : `https://github.com/${issue.repoFullName}.git`;
+      const authHeader = !isPath && token ? `Authorization: Bearer ${token}` : undefined;
+      const refPath = await ensureBareClone(repoId, cloneUrl, {
+        ...this.refsOptions,
+        authHeader,
+      });
       env.SYMPHONY_REPO_REF = refPath;
     } catch (error) {
       log.warn(
