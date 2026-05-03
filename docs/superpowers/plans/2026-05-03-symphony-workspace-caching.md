@@ -1539,7 +1539,7 @@ This milestone is large. We split it into 3 sub-milestones (M3a/b/c) that each e
 
 ### Task 3.0: Branch from main
 
-- [ ] **Step 1: Fresh branch off main (after M2 merges)**
+- [x] **Step 1: Fresh branch off main (after M2 merges)**
 
 ```bash
 git checkout main && git pull && git checkout -b feat/workspace-recipes
@@ -1552,7 +1552,7 @@ git checkout main && git pull && git checkout -b feat/workspace-recipes
 **Files:**
 - Test: `test/recipe_validator.test.ts` (create)
 
-- [ ] **Step 1: Write tests for the schema layer**
+- [x] **Step 1: Write tests for the schema layer**
 
 ```typescript
 import { describe, it, expect } from "vitest";
@@ -1603,7 +1603,7 @@ describe("validateRecipe — schema", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should FAIL:**
+- [x] **Step 2: Run — should FAIL:**
 
 ```bash
 npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
@@ -1616,7 +1616,7 @@ Expected: FAIL — module missing.
 **Files:**
 - Create: `src/workspace/recipe_validator.ts`
 
-- [ ] **Step 1: Write the module**
+- [x] **Step 1: Write the module**
 
 ```typescript
 // src/workspace/recipe_validator.ts
@@ -1674,7 +1674,7 @@ export function validateRecipe(body: string, manifest: RecipeManifest): Validati
 }
 ```
 
-- [ ] **Step 2: Run — should PASS:**
+- [x] **Step 2: Run — should PASS:**
 
 ```bash
 npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
@@ -1684,7 +1684,7 @@ Expected: PASS.
 
 ### Task 3.3: Charset + control-char check
 
-- [ ] **Step 1: Add tests**
+- [x] **Step 1: Add tests**
 
 In `test/recipe_validator.test.ts`:
 
@@ -1708,7 +1708,7 @@ describe("validateRecipe — charset", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should FAIL:**
+- [x] **Step 2: Run — should FAIL:**
 
 ```bash
 npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
@@ -1716,7 +1716,7 @@ npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
 
 Expected: FAIL.
 
-- [ ] **Step 3: Add charset check to `validateRecipe`**
+- [x] **Step 3: Add charset check to `validateRecipe`**
 
 ```typescript
   // Charset layer — UTF-8 already enforced by string type; reject NUL + CR + other control chars.
@@ -1730,7 +1730,7 @@ Expected: FAIL.
 
 Insert before the final `return`.
 
-- [ ] **Step 4: Run — should PASS:**
+- [x] **Step 4: Run — should PASS:**
 
 ```bash
 npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
@@ -1738,7 +1738,7 @@ npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
 
 ### Task 3.4: Regex blocklist test cases
 
-- [ ] **Step 1: Add table-driven tests**
+- [x] **Step 1: Add table-driven tests**
 
 ```typescript
 const BLOCKLIST_CASES: Array<[string, RegExp | null, string]> = [
@@ -1770,13 +1770,13 @@ describe("validateRecipe — blocklist", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should FAIL** (blocklist not implemented):
+- [x] **Step 2: Run — should FAIL** (blocklist not implemented):
 
 ```bash
 npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
 ```
 
-- [ ] **Step 3: Implement blocklist in `validateRecipe`**
+- [x] **Step 3: Implement blocklist in `validateRecipe`**
 
 Add at module scope:
 
@@ -1805,7 +1805,7 @@ In the function body (before `return`):
   }
 ```
 
-- [ ] **Step 4: Run — should PASS:**
+- [x] **Step 4: Run — should PASS:**
 
 ```bash
 npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
@@ -1813,7 +1813,7 @@ npx vitest run test/recipe_validator.test.ts 2>&1 | tail -10
 
 ### Task 3.5: Secret scanner
 
-- [ ] **Step 1: Failing test in `test/recipe_secret_scanner.test.ts`** (create)
+- [x] **Step 1: Failing test in `test/recipe_secret_scanner.test.ts`** (create)
 
 ```typescript
 import { describe, it, expect } from "vitest";
@@ -1858,13 +1858,13 @@ describe("validateRecipe — secret scan", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should FAIL:**
+- [x] **Step 2: Run — should FAIL:**
 
 ```bash
 npx vitest run test/recipe_secret_scanner.test.ts 2>&1 | tail -10
 ```
 
-- [ ] **Step 3: Add secret patterns to `recipe_validator.ts`**
+- [x] **Step 3: Add secret patterns to `recipe_validator.ts`**
 
 ```typescript
 const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
@@ -1886,7 +1886,7 @@ In `validateRecipe`:
   }
 ```
 
-- [ ] **Step 4: Run — should PASS:**
+- [x] **Step 4: Run — should PASS:**
 
 ```bash
 npx vitest run test/recipe_secret_scanner.test.ts 2>&1 | tail -10
@@ -1894,7 +1894,7 @@ npx vitest run test/recipe_secret_scanner.test.ts 2>&1 | tail -10
 
 ### Task 3.6: Adversarial validation test
 
-- [ ] **Step 1: Create `test/recipe_validator.adversarial.test.ts`**
+- [x] **Step 1: Create `test/recipe_validator.adversarial.test.ts`**
 
 ```typescript
 import { describe, it, expect } from "vitest";
@@ -1934,7 +1934,7 @@ describe("recipe validator — adversarial", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should PASS** (validator already covers all):
+- [x] **Step 2: Run — should PASS** (validator already covers all):
 
 ```bash
 npx vitest run test/recipe_validator.adversarial.test.ts 2>&1 | tail -10
@@ -1945,7 +1945,7 @@ npx vitest run test/recipe_validator.adversarial.test.ts 2>&1 | tail -10
 **Files:**
 - Create: `skills/symphony-workspace-bootstrap/SKILL.md`
 
-- [ ] **Step 1: Write the skill**
+- [x] **Step 1: Write the skill**
 
 ```markdown
 ---
@@ -2036,7 +2036,7 @@ A regex blocklist enforces these post-hoc. Recipes that fail validation are reje
 ```
 ```
 
-- [ ] **Step 2: Skill validation runs against an example output via the validator**
+- [x] **Step 2: Skill validation runs against an example output via the validator**
 
 Add a test `test/recipe_validator.skill_example.test.ts`:
 
@@ -2075,7 +2075,7 @@ Expected: PASS.
 
 ### Task 3.8: M3a quality gate
 
-- [ ] **Step 1: Full suite + typecheck:**
+- [x] **Step 1: Full suite + typecheck:**
 
 ```bash
 npm test 2>&1 | grep -E "Test Files|Tests " | tail -5
