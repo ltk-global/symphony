@@ -97,12 +97,14 @@ const BLOCKLIST: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\bcrontab\s+-/i, label: "crontab" },
   { pattern: /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:/i, label: "fork-bomb" },
   // Block redirects to ANY absolute path except `/dev/{null,stderr,stdout}`.
-  // Covers `> /etc/foo`, `> /tmp/x`, `> /usr/local/bin/y`, etc. — recipes
-  // must use $WORKSPACE / $SYMPHONY_CACHE_DIR, not hardcoded absolute paths.
-  { pattern: />>?\s*["']?\/(?!dev\/(?:null|stderr|stdout)\b)[A-Za-z]/i, label: "absolute-write" },
-  // Block cp/mv/install/tee with absolute destination (same intent as the
-  // redirect rule above for non-redirecting writes).
-  { pattern: /\b(cp|mv|install|tee)\s+[^\n;&|]*\s["']?\/(?!dev\/(?:null|stderr|stdout)\b)[A-Za-z]/i, label: "absolute-write" },
+  // `>>?\|?` covers `>`, `>>`, and `>|` (force-overwrite under noclobber).
+  // Covers `> /etc/foo`, `> /tmp/x`, `> /usr/local/bin/y`, etc.
+  { pattern: />>?\|?\s*["']?\/(?!dev\/(?:null|stderr|stdout)\b)[A-Za-z]/i, label: "absolute-write" },
+  // Block cp/mv/install/tee writing to an absolute destination. `tee` only
+  // needs `tee /path` (it reads from stdin which may come from a prior
+  // pipe), so don't require a preceding operand for it.
+  { pattern: /\b(cp|mv|install)\s+[^\n;&|]*\s["']?\/(?!dev\/(?:null|stderr|stdout)\b)[A-Za-z]/i, label: "absolute-write" },
+  { pattern: /\btee\b[^\n;&|]*\s["']?\/(?!dev\/(?:null|stderr|stdout)\b)[A-Za-z]/i, label: "absolute-write" },
   // Block redirects to home — `> ~/.npmrc`, `>> $HOME/.bashrc`, etc.
   // would mutate the runner's persistent user environment.
   { pattern: />>?\s*["']?(~|\$\{?HOME\b)/i, label: "home-write" },
@@ -209,7 +211,13 @@ export function validateRecipe(body: unknown, manifest: RecipeManifest): Validat
   const quotelessBody = body.replace(/\$?['"]/g, "");
   const unescapedBody = body.replace(/\\(.)/g, "$1");
   const combinedBody = quotelessBody.replace(/\\(.)/g, "$1");
-  const fullyNormalizedBody = joinedBody.replace(/\$?['"]/g, "").replace(/\\(.)/g, "$1");
+  // Decode `\xNN` ANSI-C hex escapes (`$'\x75'` → `u`) before stripping
+  // quotes, then strip quotes and remove backslash escapes. Without this,
+  // an LLM could spell forbidden words via hex-encoded ANSI-C quoting.
+  const fullyNormalizedBody = joinedBody
+    .replace(/\\x([0-9a-fA-F]{2})/g, (_m, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\$?['"]/g, "")
+    .replace(/\\(.)/g, "$1");
   const views = [body, joinedBody, quotelessBody, unescapedBody, combinedBody, fullyNormalizedBody];
   for (const rule of BLOCKLIST) {
     if (views.some((v) => rule.pattern.test(v))) {
