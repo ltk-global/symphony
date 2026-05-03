@@ -641,7 +641,7 @@ EOF
 
 ### Task 2.0: Branch from main (after M1 merges)
 
-- [ ] **Step 1: Fresh branch off main**
+- [x] **Step 1: Fresh branch off main**
 
 ```bash
 git checkout main && git pull && git checkout -b feat/workspace-refs
@@ -652,7 +652,7 @@ git checkout main && git pull && git checkout -b feat/workspace-refs
 **Files:**
 - Test: `test/workspace_refs.test.ts` (create)
 
-- [ ] **Step 1: Write the test**
+- [x] **Step 1: Write the test**
 
 ```typescript
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -690,7 +690,7 @@ describe("ensureBareClone", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should FAIL** (module missing):
+- [x] **Step 2: Run — should FAIL** (module missing):
 
 ```bash
 npx vitest run test/workspace_refs.test.ts 2>&1 | tail -10
@@ -703,7 +703,7 @@ Expected: FAIL with `Cannot find module '../src/workspace/refs.js'`.
 **Files:**
 - Create: `src/workspace/refs.ts`
 
-- [ ] **Step 1: Write the module**
+- [x] **Step 1: Write the module**
 
 ```typescript
 // src/workspace/refs.ts
@@ -744,7 +744,7 @@ export async function ensureBareClone(
 }
 ```
 
-- [ ] **Step 2: Run — should PASS:**
+- [x] **Step 2: Run — should PASS:**
 
 ```bash
 npx vitest run test/workspace_refs.test.ts 2>&1 | tail -10
@@ -757,7 +757,7 @@ Expected: PASS.
 **Files:**
 - Modify: `test/workspace_refs.test.ts`
 
-- [ ] **Step 1: Add test**
+- [x] **Step 1: Add test**
 
 ```typescript
   it("on second call, runs git fetch in the existing bare clone", async () => {
@@ -773,7 +773,7 @@ Expected: PASS.
   });
 ```
 
-- [ ] **Step 2: Run — expect FAIL** (impl currently skips fetch):
+- [x] **Step 2: Run — expect FAIL** (impl currently skips fetch):
 
 ```bash
 npx vitest run test/workspace_refs.test.ts 2>&1 | tail -10
@@ -786,7 +786,7 @@ Expected: FAIL — log only shows 1 commit (the seed).
 **Files:**
 - Modify: `src/workspace/refs.ts`
 
-- [ ] **Step 1: Update `ensureBareClone`**
+- [x] **Step 1: Update `ensureBareClone`**
 
 Replace the body of `ensureBareClone` with:
 
@@ -816,7 +816,7 @@ export async function ensureBareClone(
 }
 ```
 
-- [ ] **Step 2: Run — should PASS:**
+- [x] **Step 2: Run — should PASS:**
 
 ```bash
 npx vitest run test/workspace_refs.test.ts 2>&1 | tail -10
@@ -829,7 +829,7 @@ Expected: PASS, both tests.
 **Files:**
 - Modify: `test/workspace_refs.test.ts`
 
-- [ ] **Step 1: Add test**
+- [x] **Step 1: Add test**
 
 ```typescript
   it("recreates the bare clone if the existing one is corrupted (fetch fails)", async () => {
@@ -843,7 +843,7 @@ Expected: PASS, both tests.
   });
 ```
 
-- [ ] **Step 2: Run — expect FAIL** (impl currently throws on fetch failure):
+- [x] **Step 2: Run — expect FAIL** (impl currently throws on fetch failure):
 
 ```bash
 npx vitest run test/workspace_refs.test.ts 2>&1 | tail -10
@@ -856,7 +856,7 @@ Expected: FAIL with `bare_fetch_failed:…`.
 **Files:**
 - Modify: `src/workspace/refs.ts`
 
-- [ ] **Step 1: Wrap the fetch path with one-time-recreate fallback**
+- [x] **Step 1: Wrap the fetch path with one-time-recreate fallback**
 
 Replace the "Existing clone — refresh" branch:
 
@@ -878,7 +878,7 @@ Replace the "Existing clone — refresh" branch:
   }
 ```
 
-- [ ] **Step 2: Run — all three tests should PASS:**
+- [x] **Step 2: Run — all three tests should PASS:**
 
 ```bash
 npx vitest run test/workspace_refs.test.ts 2>&1 | tail -10
@@ -891,7 +891,7 @@ Expected: PASS.
 **Files:**
 - Modify: `test/workspace_refs.test.ts`
 
-- [ ] **Step 1: Add test**
+- [x] **Step 1: Add test**
 
 ```typescript
   it("serializes concurrent calls for the same repoId via flock", async () => {
@@ -907,7 +907,7 @@ Expected: PASS.
   });
 ```
 
-- [ ] **Step 2: Run** — may pass already due to race-luck; if it does, the test must still serve as documentation:
+- [x] **Step 2: Run** — may pass already due to race-luck; if it does, the test must still serve as documentation:
 
 ```bash
 npx vitest run test/workspace_refs.test.ts 2>&1 | tail -10
@@ -922,7 +922,7 @@ Expected: PASS (because all 5 calls produce the same path; if races corrupt the 
 
 Symphony already has `FileSemaphore` in the iris area but not exposed for general use. We'll use `proper-lockfile`-style implementation inline because adding a dep is overkill for this use.
 
-- [ ] **Step 1: Add a simple lockfile helper**
+- [x] **Step 1: Add a simple lockfile helper**
 
 Add at top of `src/workspace/refs.ts`:
 
@@ -956,7 +956,7 @@ async function withLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
 
 Add `dirname` to imports: `import { dirname, join, resolve } from "node:path";`
 
-- [ ] **Step 2: Wrap the body of `ensureBareClone` in `withLock`**
+- [x] **Step 2: Wrap the body of `ensureBareClone` in `withLock`**
 
 ```typescript
 export async function ensureBareClone(
@@ -993,7 +993,7 @@ export async function ensureBareClone(
 }
 ```
 
-- [ ] **Step 3: Run all four tests — should PASS:**
+- [x] **Step 3: Run all four tests — should PASS:**
 
 ```bash
 npx vitest run test/workspace_refs.test.ts 2>&1 | tail -10
@@ -1007,7 +1007,7 @@ Expected: PASS.
 - Modify: `src/config/index.ts` (Zod schema for `ServiceConfig.workspace`)
 - Modify: `src/workflow/loader.ts` (the YAML→config mapping for `workspace.cache.*`)
 
-- [ ] **Step 1: Add a failing config test**
+- [x] **Step 1: Add a failing config test**
 
 Create `test/workspace_cache_config.test.ts`:
 
@@ -1041,7 +1041,7 @@ describe("workspace.cache config", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should FAIL:**
+- [x] **Step 2: Run — should FAIL:**
 
 ```bash
 npx vitest run test/workspace_cache_config.test.ts 2>&1 | tail -10
@@ -1049,7 +1049,7 @@ npx vitest run test/workspace_cache_config.test.ts 2>&1 | tail -10
 
 Expected: FAIL — `cache` field undefined.
 
-- [ ] **Step 3: Add the schema entry**
+- [x] **Step 3: Add the schema entry**
 
 Locate the workspace section in `src/config/index.ts` (Zod object) and add a `cache` field:
 
@@ -1076,7 +1076,7 @@ if (wsCache !== undefined) {
 }
 ```
 
-- [ ] **Step 4: Run — both tests should PASS:**
+- [x] **Step 4: Run — both tests should PASS:**
 
 ```bash
 npx vitest run test/workspace_cache_config.test.ts 2>&1 | tail -10
@@ -1089,7 +1089,7 @@ Expected: PASS.
 **Files:**
 - Modify: `src/workspace/manager.ts`
 
-- [ ] **Step 1: Failing test in `test/workspace_manager.cache.test.ts`** (create)
+- [x] **Step 1: Failing test in `test/workspace_manager.cache.test.ts`** (create)
 
 ```typescript
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -1164,7 +1164,7 @@ describe("WorkspaceManager — caching env vars", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should FAIL** (manager doesn't yet support cache config or expose `afterCreateOutput`/`envSnapshot`):
+- [x] **Step 2: Run — should FAIL** (manager doesn't yet support cache config or expose `afterCreateOutput`/`envSnapshot`):
 
 ```bash
 npx vitest run test/workspace_manager.cache.test.ts 2>&1 | tail -10
@@ -1172,7 +1172,7 @@ npx vitest run test/workspace_manager.cache.test.ts 2>&1 | tail -10
 
 Expected: FAIL.
 
-- [ ] **Step 3: Modify `WorkspaceManager`**
+- [x] **Step 3: Modify `WorkspaceManager`**
 
 In `src/workspace/manager.ts` (around the `prepare` method):
 
@@ -1205,7 +1205,7 @@ if (this.cache.strategy !== "none" && issue.issueRepoNodeId && issue.issueRepoCl
 
 (Engineer: the existing `manager.ts` is 142 lines; read it and adapt the diff to actual line numbers.)
 
-- [ ] **Step 4: Run — both tests should PASS:**
+- [x] **Step 4: Run — both tests should PASS:**
 
 ```bash
 npx vitest run test/workspace_manager.cache.test.ts 2>&1 | tail -10
@@ -1219,7 +1219,7 @@ Expected: PASS.
 - Modify: `scripts/init.mjs:802-813` (the canned `renderWorkflow` `after_create` block)
 - Modify: `skills/symphony-workflow-author/SKILL.md` (the example `after_create` in `### `polling`, `workspace`, `hooks``)
 
-- [ ] **Step 1: Update the canned template in `init.mjs`**
+- [x] **Step 1: Update the canned template in `init.mjs`**
 
 Replace the existing `after_create` lines (in `renderWorkflow`):
 
@@ -1238,11 +1238,11 @@ Replace the existing `after_create` lines (in `renderWorkflow`):
   lines.push("    git checkout -B \"${ISSUE_BRANCH_NAME:-symphony/${ISSUE_WORKSPACE_KEY}}\"");
 ```
 
-- [ ] **Step 2: Mirror the change in `skills/symphony-workflow-author/SKILL.md`**
+- [x] **Step 2: Mirror the change in `skills/symphony-workflow-author/SKILL.md`**
 
 Find the `hooks:` example block and replace the `after_create` body to match the bash above. Keep the YAML literal-block (`|`) syntax.
 
-- [ ] **Step 3: Run the full test suite to verify nothing regressed:**
+- [x] **Step 3: Run the full test suite to verify nothing regressed:**
 
 ```bash
 npm test 2>&1 | grep -E "Test Files|Tests " | tail -5
@@ -1256,7 +1256,7 @@ Expected: all previously-passing tests still pass; the new `workspace_manager.ca
 - Create: `test/fixtures/repos/tiny-node-pnpm/` (committed empty git repo with `package.json` + `pnpm-lock.yaml`)
 - Create: `test/integration/workspace_dispatch.test.ts`
 
-- [ ] **Step 1: Bootstrap the fixture repo**
+- [x] **Step 1: Bootstrap the fixture repo**
 
 ```bash
 mkdir -p test/fixtures/repos/tiny-node-pnpm
@@ -1276,7 +1276,7 @@ cd ../../../..
 
 Note: this checks the `.git` dir into the parent repo. Verify by running `git status` — the fixture's `.git` is treated as a regular directory because Git doesn't recurse into nested .git unless it's a submodule.
 
-- [ ] **Step 2: Write integration test**
+- [x] **Step 2: Write integration test**
 
 ```typescript
 // test/integration/workspace_dispatch.test.ts
@@ -1331,7 +1331,7 @@ describe("integration: workspace dispatch end-to-end", () => {
 });
 ```
 
-- [ ] **Step 3: Run — should PASS:**
+- [x] **Step 3: Run — should PASS:**
 
 ```bash
 npx vitest run test/integration/workspace_dispatch.test.ts 2>&1 | tail -10
@@ -1344,7 +1344,7 @@ Expected: PASS.
 **Files:**
 - Create: `test/integration/workspace_fallback.test.ts`
 
-- [ ] **Step 1: Write test**
+- [x] **Step 1: Write test**
 
 ```typescript
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -1411,7 +1411,7 @@ describe("integration: workspace fallback when ref clone is corrupted", () => {
 });
 ```
 
-- [ ] **Step 2: Run — should PASS:**
+- [x] **Step 2: Run — should PASS:**
 
 ```bash
 npx vitest run test/integration/workspace_fallback.test.ts 2>&1 | tail -10
@@ -1424,7 +1424,7 @@ Expected: PASS.
 **Files:**
 - Create: `test/integration/workspace_concurrent.test.ts`
 
-- [ ] **Step 1: Write test**
+- [x] **Step 1: Write test**
 
 ```typescript
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -1468,7 +1468,7 @@ describe("integration: concurrent prepares for the same repo serialize via flock
 });
 ```
 
-- [ ] **Step 2: Run — should PASS:**
+- [x] **Step 2: Run — should PASS:**
 
 ```bash
 npx vitest run test/integration/workspace_concurrent.test.ts 2>&1 | tail -10
@@ -1478,7 +1478,7 @@ Expected: PASS.
 
 ### Task 2.15: M2 quality gate
 
-- [ ] **Step 1: Full suite + typecheck:**
+- [x] **Step 1: Full suite + typecheck:**
 
 ```bash
 npm test 2>&1 | grep -E "Test Files|Tests " | tail -5
@@ -1487,11 +1487,11 @@ npm run typecheck 2>&1 | tail -10
 
 Expected: green.
 
-- [ ] **Step 2: Run `/simplify` on the M2 diff. Address findings.**
+- [x] **Step 2: Run `/simplify` on the M2 diff. Address findings.**
 
-- [ ] **Step 3: Run `/codex-review` on the M2 diff. Iterate until clean.**
+- [x] **Step 3: Run `/codex-review` on the M2 diff. Iterate until clean.**
 
-- [ ] **Step 4: Commit + open PR**
+- [x] **Step 4: Commit + open PR**
 
 ```bash
 git add src/workspace/refs.ts src/workspace/manager.ts src/config/index.ts src/workflow/loader.ts \
