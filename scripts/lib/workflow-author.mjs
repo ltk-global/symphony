@@ -8,11 +8,10 @@
 // { source: null, fallback: true, reason } so the caller can fall back to the
 // canned renderWorkflow() template.
 
-import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { execFileSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runSkill, LlmUnavailableError } from "./llm-runner.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
@@ -25,10 +24,6 @@ export async function authorWorkflow({
   spawnImpl,
   timeoutMs = 120_000,
 } = {}) {
-  if (!isOnPath(claudeCommand)) {
-    return { source: null, fallback: true, reason: "claude_not_on_path" };
-  }
-
   const skill = await readFile(SKILL_PATH, "utf8");
   const baseMessage = buildUserMessage(context, description);
 
@@ -37,8 +32,17 @@ export async function authorWorkflow({
     const message = lastError ? appendValidationError(baseMessage, lastError) : baseMessage;
     let stdout;
     try {
-      stdout = await runClaude({ skill, message, claudeCommand, spawnImpl, timeoutMs });
+      stdout = await runSkill({
+        skill, message,
+        runner: "auto",
+        claudeCommand,
+        spawnImpl,
+        timeoutMs,
+      });
     } catch (error) {
+      if (error instanceof LlmUnavailableError) {
+        return { source: null, fallback: true, reason: "claude_not_on_path" };
+      }
       return { source: null, fallback: true, reason: `claude_invocation_failed:${error instanceof Error ? error.message : String(error)}` };
     }
     const cleaned = extractWorkflow(stdout);
@@ -95,39 +99,6 @@ function extractWorkflow(stdout) {
   return cleaned.endsWith("\n") ? cleaned : `${cleaned}\n`;
 }
 
-function runClaude({ skill, message, claudeCommand, spawnImpl, timeoutMs }) {
-  return new Promise((resolveOut, rejectOut) => {
-    const spawner = spawnImpl ?? spawn;
-    // We pipe the prompt via stdin (avoids ARG_MAX issues with large skills) and use
-    // --input-format text. --print runs one-shot without tool execution by default.
-    const args = [
-      "--print",
-      "--input-format", "text",
-      "--append-system-prompt", skill,
-    ];
-    const child = spawner(claudeCommand, args, { stdio: ["pipe", "pipe", "pipe"] });
-    child.stdin.end(message);
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
-    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      rejectOut(new Error(`claude_timeout_after_${timeoutMs}ms`));
-    }, timeoutMs);
-    timer.unref?.();
-    child.once("error", (error) => {
-      clearTimeout(timer);
-      rejectOut(error);
-    });
-    child.once("exit", (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolveOut(stdout);
-      else rejectOut(new Error(`claude_exit_${code}:${stderr.trim().slice(-300)}`));
-    });
-  });
-}
-
 async function validateWorkflow(source, context) {
   if (!source.startsWith("---")) {
     throw new Error("output did not start with YAML front matter fence '---'");
@@ -161,13 +132,4 @@ async function validateWorkflow(source, context) {
   }
 
   return cfg;
-}
-
-function isOnPath(bin) {
-  try {
-    execFileSync("which", [bin], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
 }
