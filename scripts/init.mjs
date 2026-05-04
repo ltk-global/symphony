@@ -777,6 +777,15 @@ async function maybeAddNeedsHumanOption(graphqlFn, fieldId, options, desiredName
   } catch (error) {
     fail(`couldn't update field: ${error instanceof Error ? error.message : error}`);
     info("You can add the option manually in Project → Settings → Status field.");
+    // Interactively the operator can finish setup, fix the project in the
+    // GitHub UI, and re-run init. In --yes mode there's no recovery path —
+    // returning the original options would let `defaultNeedsHumanState` pick
+    // the first available status (often `Todo`), routing blocked items back
+    // into the active queue. Fail loudly instead.
+    if (WIZARD_FLAGS.yes) {
+      info("Add the option manually (Project → Settings → Status field) and re-run with --yes.");
+      exit(1);
+    }
     return options;
   }
 }
