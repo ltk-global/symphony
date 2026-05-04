@@ -59,6 +59,39 @@ symphony recipe prune --force         # wipe everything
 a test seam — all subcommands honor the env var so you can rehearse cache
 operations against a sandbox.
 
+## LLM CLI resolution
+
+Symphony spawns `claude` and `codex` to author recipes. Defaults are
+chosen for cross-machine portability rather than performance:
+
+| env var | default | purpose |
+| --- | --- | --- |
+| `SYMPHONY_CLAUDE_BIN` | `npx --yes @anthropic-ai/claude-code@latest` | argv[0]+leading-args for the claude invocation |
+| `SYMPHONY_CODEX_BIN`  | `npx --yes @openai/codex@latest`            | same, for codex |
+| `SYMPHONY_LLM_RUNNER` | `auto` (claude → codex)                     | force a specific runner; rejects if not on PATH |
+
+The default `npx --yes …@latest` always pulls the latest published
+release. First call with a cold npm cache takes ~5–10s; warm calls take
+~200ms — negligible alongside the 30–90s LLM round-trip itself.
+
+Power users override by setting the env var to either:
+
+- A bare absolute path: `SYMPHONY_CODEX_BIN=/usr/local/bin/codex`
+- A pinned npx invocation: `SYMPHONY_CODEX_BIN="npx --yes @openai/codex@1.2.3"`
+- A wrapper script: `SYMPHONY_CLAUDE_BIN="/opt/airgap/bin/claude --no-update-check"`
+
+Whitespace splits the value into argv elements. The same precedence
+applies regardless of whether the call originates from the wizard's
+eager bootstrap or the daemon's lazy bootstrap.
+
+> **Why npx instead of PATH lookup?** A homebrew-installed binary that's
+> 6 months old can silently route to a model the OpenAI/Anthropic
+> backend has since gated behind a newer CLI version. The error surfaces
+> at LLM dispatch time, not at spawn time, and the auto-runner falls
+> through correctly — but the experience is "codex doesn't work for me"
+> with no obvious cause. Defaulting to `@latest` makes Symphony work on
+> any machine with Node + network without an install step.
+
 ## Consent model
 
 The wizard (`scripts/init.mjs`) prompts before enabling LLM-authored
