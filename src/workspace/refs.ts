@@ -10,14 +10,18 @@ const execFileAsync = promisify(execFile);
 
 export interface RefsOptions {
   cacheRoot?: string;
-  // Optional `Authorization: …` header sent via `git -c http.extraHeader=…`.
-  // Passed per-invocation rather than baked into the clone URL so the token
-  // never lands in remote.origin.url or in fetch error messages.
-  authHeader?: string;
+  // Optional GitHub token (raw, not pre-formatted). When set, sent via
+  // `git -c http.extraHeader='Authorization: Basic …'` per-invocation so
+  // the token never lands in remote.origin.url or in fetch error messages.
+  // The header is the Basic form (`base64(x-access-token:<token>)`) — which
+  // matches what URL-injection (`https://x-access-token:TOKEN@…`) produces
+  // internally. The Bearer form is rejected by GitHub for `gho_*` user-OAuth
+  // tokens, so we use Basic for compatibility across all token shapes.
+  authToken?: string;
 }
 
 function redactAuth(text: string): string {
-  return text.replace(/Authorization: Bearer [^\s'"]+/g, "Authorization: Bearer ***REDACTED***");
+  return text.replace(/Authorization: (Bearer|Basic) [^\s'"]+/g, "Authorization: $1 ***REDACTED***");
 }
 
 function gitErrorMessage(err: unknown): string {
@@ -34,8 +38,10 @@ function sanitize(repoId: string): string {
   return repoId.replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
-function gitArgs(authHeader: string | undefined, ...args: string[]): string[] {
-  return authHeader ? ["-c", `http.extraHeader=${authHeader}`, ...args] : args;
+function gitArgs(authToken: string | undefined, ...args: string[]): string[] {
+  if (!authToken) return args;
+  const basic = Buffer.from(`x-access-token:${authToken}`).toString("base64");
+  return ["-c", `http.extraHeader=Authorization: Basic ${basic}`, ...args];
 }
 
 export function getReferencePath(repoId: string, opts: RefsOptions = {}): string {
@@ -55,19 +61,19 @@ export async function ensureBareClone(
 
   return withLock(lockPath, { errorPrefix: "bare_clone_lock_timeout" }, async () => {
     if (!existsSync(bareClonePath)) {
-      await tryClone(cloneUrl, bareClonePath, opts.authHeader);
+      await tryClone(cloneUrl, bareClonePath, opts.authToken);
       return bareClonePath;
     }
     if (!existsSync(join(bareClonePath, "objects")) || !existsSync(join(bareClonePath, "HEAD"))) {
       // Corrupted bare clone — delete and re-clone.
       await rm(bareClonePath, { recursive: true, force: true });
-      await tryClone(cloneUrl, bareClonePath, opts.authHeader);
+      await tryClone(cloneUrl, bareClonePath, opts.authToken);
       return bareClonePath;
     }
     try {
       await execFileAsync(
         "git",
-        gitArgs(opts.authHeader, "-C", bareClonePath, "fetch", "--all", "--prune", "--quiet"),
+        gitArgs(opts.authToken, "-C", bareClonePath, "fetch", "--all", "--prune", "--quiet"),
         { timeout: 120_000 },
       );
       return bareClonePath;
@@ -80,11 +86,11 @@ export async function ensureBareClone(
   });
 }
 
-async function tryClone(cloneUrl: string, destPath: string, authHeader: string | undefined): Promise<void> {
+async function tryClone(cloneUrl: string, destPath: string, authToken: string | undefined): Promise<void> {
   try {
     await execFileAsync(
       "git",
-      gitArgs(authHeader, "clone", "--bare", "--quiet", cloneUrl, destPath),
+      gitArgs(authToken, "clone", "--bare", "--quiet", cloneUrl, destPath),
       { timeout: 600_000 },
     );
     // git clone --bare doesn't set up a fetch refspec; configure one so

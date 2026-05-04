@@ -242,15 +242,19 @@ export class WorkspaceManager {
       const cloneUrl = isPath
         ? issue.repoFullName
         : `https://github.com/${issue.repoFullName}.git`;
-      const authHeader = !isPath && token ? `Authorization: Bearer ${token}` : undefined;
+      const authToken = !isPath && token ? token : undefined;
       const refPath = await ensureBareClone(repoId, cloneUrl, {
         ...this.refsOptions,
-        authHeader,
+        authToken,
       });
       env.SYMPHONY_REPO_REF = refPath;
     } catch (error) {
+      // Pino's default serializer only expands Errors named `err`; pass
+      // .message explicitly so operators see WHY the bare-clone failed
+      // rather than `error: {}`.
+      const reason = error instanceof Error ? error.message : String(error);
       log.warn(
-        { error, issue_id: issue.id, issue_identifier: issue.identifier, repo: issue.repoFullName },
+        { reason, issue_id: issue.id, issue_identifier: issue.identifier, repo: issue.repoFullName },
         "ensure_bare_clone_failed_skipping_reference",
       );
     }
