@@ -10,22 +10,37 @@ import { writeFile } from "node:fs/promises";
 import { authorWorkflow } from "./lib/workflow-author.mjs";
 import { authorRecipe } from "./lib/workspace-bootstrap.mjs";
 import { runProjectChecks, formatChecks, checksFailed } from "./lib/project-checks.mjs";
+import {
+  defaultActiveStates,
+  defaultTerminalStates,
+  defaultNeedsHumanState,
+  parseList,
+  slug,
+  parseInitArgs,
+} from "./lib/init-defaults.mjs";
+import {
+  fetchStatusField,
+  createStatusField,
+  addStatusOption,
+} from "./lib/status-field.mjs";
+import { graphql, parseProjectUrl } from "./lib/github-graphql.mjs";
 import { tmpdir } from "node:os";
 import { resolve, dirname, join } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
-// Wizard CLI flags. Currently just `--no-eager-bootstrap` for skipping the
-// LLM-authored recipe priming step. Parsed once at module load so the rest
-// of the wizard can branch on a constant rather than threading argv through.
-const WIZARD_FLAGS = {
-  noEagerBootstrap: process.argv.includes("--no-eager-bootstrap"),
-};
+// Wizard CLI flags. Parsed once at module load so the rest of the wizard
+// can branch on a constant rather than threading argv through.
+//   --yes / -y               accept defaults; never prompt (for scripted setup)
+//   --project <url>          skip the project picker, resolve <url> directly
+//   --no-eager-bootstrap     skip the LLM-authored recipe priming step
+const WIZARD_FLAGS = parseInitArgs(process.argv.slice(2));
 
 const C = {
   reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
   red: "\x1b[31m", green: "\x1b[32m", yellow: "\x1b[33m", blue: "\x1b[34m", cyan: "\x1b[36m",
 };
+const YES_TAG = `${C.dim}(--yes)${C.reset}`;
 const out = (s = "") => process.stdout.write(s + "\n");
 const head = (s) => out(`\n${C.bold}${C.cyan}── ${s}${C.reset}`);
 const ok = (s) => out(`  ${C.green}✓${C.reset} ${s}`);
@@ -38,6 +53,28 @@ const repoRoot = resolve(dirname(new URL(import.meta.url).pathname), "..");
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 
 function ask(question, { default: def, hidden = false, validate } = {}) {
+  // --yes mode: silently accept the default. A prompt with NO default
+  // (`def === undefined`) is one the operator MUST supply interactively;
+  // explicit `default: ""` means "empty is a valid answer (e.g. no filter)".
+  if (WIZARD_FLAGS.yes) {
+    if (def === undefined) {
+      fail(`non-interactive mode (--yes) cannot answer required prompt: '${question}'`);
+      info("Provide the value via env var or flag, or re-run without --yes.");
+      exit(1);
+    }
+    const display = def === "" ? `${C.dim}(blank)${C.reset}` : `${C.bold}${def}${C.reset}`;
+    info(`${question}: ${display} ${YES_TAG}`);
+    return Promise.resolve(def).then(async (raw) => {
+      if (validate) {
+        const error = await validate(raw);
+        if (error) {
+          fail(`validation failed for default '${def}' on '${question}': ${error}`);
+          exit(1);
+        }
+      }
+      return raw;
+    });
+  }
   return new Promise((resolveInput) => {
     const prompt = def !== undefined ? `${question} ${C.dim}[${def}]${C.reset}: ` : `${question}: `;
     if (!hidden) {
@@ -78,6 +115,12 @@ function ask(question, { default: def, hidden = false, validate } = {}) {
 }
 
 async function askYesNo(question, def = true) {
+  // --yes mode: return the caller's default unchanged. The default expresses
+  // intent ("yes by default" vs "no by default") rather than just a placeholder.
+  if (WIZARD_FLAGS.yes) {
+    info(`${question}: ${C.bold}${def ? "y" : "n"}${C.reset} ${YES_TAG}`);
+    return def;
+  }
   const hint = def ? "Y/n" : "y/N";
   const answer = (await ask(`${question} (${hint})`)).toLowerCase();
   if (!answer) return def;
@@ -137,6 +180,10 @@ async function main() {
   let token = process.env.GITHUB_TOKEN ?? "";
   if (token) {
     ok(`GITHUB_TOKEN already set (${token.length} chars)`);
+  } else if (WIZARD_FLAGS.yes) {
+    fail("non-interactive mode (--yes) requires GITHUB_TOKEN to be exported");
+    info("Generate a PAT at github.com/settings/tokens with scopes: repo, project.");
+    exit(1);
   } else {
     info("GITHUB_TOKEN env var is not set. Paste one now to validate (input hidden).");
     info("Token needs scopes: repo, project. Generate at github.com/settings/tokens.");
@@ -157,38 +204,74 @@ async function main() {
 
   // ── 4. Pick a Project ──────────────────────────────────
   head("GitHub Project (v2)");
-  let project = await pickProject(token, viewerLogin);
-  if (!project) {
-    info("No Project picked. Create one at github.com/orgs/<org>/projects/new and re-run init.");
+  let project;
+  if (WIZARD_FLAGS.projectUrl) {
+    info(`resolving --project ${WIZARD_FLAGS.projectUrl}`);
+    project = await resolveProjectByUrl(token, WIZARD_FLAGS.projectUrl);
+    if (!project) {
+      fail(`could not resolve --project ${WIZARD_FLAGS.projectUrl}`);
+      info("Expected form: https://github.com/(orgs|users)/<owner>/projects/<number>");
+      exit(1);
+    }
+  } else if (WIZARD_FLAGS.yes) {
+    fail("non-interactive mode (--yes) requires --project <url>");
+    info("Re-run as: ./scripts/init.sh --yes --project=https://github.com/orgs/<owner>/projects/<n>");
     exit(1);
+  } else {
+    project = await pickProject(token, viewerLogin);
+    if (!project) {
+      info("No Project picked. Create one at github.com/orgs/<org>/projects/new and re-run init.");
+      exit(1);
+    }
   }
   ok(`${project.title} · ${project.url}`);
 
   // ── 5. Confirm Status field ────────────────────────────
   head("Status field");
-  let statusOptions;
+  const projectGraphql = (query, variables) => graphql(token, query, variables);
+  let statusField;
   try {
-    statusOptions = await fetchStatusOptions(token, project.id);
+    statusField = await fetchStatusField(projectGraphql, project.id);
   } catch (error) {
     fail(`couldn't read Status field on this project: ${error instanceof Error ? error.message : error}`);
     info("Make sure the project has a single-select 'Status' field.");
     exit(1);
   }
-  if (statusOptions.length === 0) {
+  if (!statusField) {
+    warn("This project has no 'Status' field.");
+    info("Symphony can create one with Todo / In Progress / Done / Needs Human.");
+    const create = await askYesNo("Create the Status field now?", true);
+    if (!create) {
+      info("Add a Status single-select field manually and re-run init.");
+      exit(1);
+    }
+    try {
+      // We already know the field is missing — go straight to create instead
+      // of `ensureStatusField` (which would re-fetch first).
+      statusField = await createStatusField(projectGraphql, project.id);
+      ok(`created Status field with: ${statusField.options.map((o) => o.name).join(", ")}`);
+    } catch (error) {
+      fail(`couldn't create Status field: ${error instanceof Error ? error.message : error}`);
+      info("Likely cause: token missing 'project' scope, or the project owner is an org you can't admin.");
+      exit(1);
+    }
+  }
+  if (statusField.options.length === 0) {
     fail("Status field has no options.");
     info("Add at least Todo, In Progress, Done, Needs Human in the GitHub UI and re-run.");
     exit(1);
   }
+  let statusOptions = statusField.options;
   info(`Available Status values: ${statusOptions.map((o) => `'${o.name}'`).join(", ")}`);
 
   const hasNeedsHuman = statusOptions.some((o) => /needs human|blocked/i.test(o.name));
   if (!hasNeedsHuman) {
-    statusOptions = await maybeAddNeedsHumanOption(token, project.id, statusOptions, "Needs Human");
+    statusOptions = await maybeAddNeedsHumanOption(projectGraphql, statusField.id, statusOptions, "Needs Human");
   }
 
-  const defaultActive = statusOptions.filter((o) => /todo|in progress|review feedback/i.test(o.name)).map((o) => o.name);
-  const defaultTerminal = statusOptions.filter((o) => /done|cancelled|won't do/i.test(o.name)).map((o) => o.name);
-  const needsHumanGuess = statusOptions.find((o) => /needs human|blocked/i.test(o.name))?.name ?? statusOptions[0].name;
+  const defaultActive = defaultActiveStates(statusOptions);
+  const defaultTerminal = defaultTerminalStates(statusOptions);
+  const needsHumanGuess = defaultNeedsHumanState(statusOptions);
 
   const activeStates = parseList(await ask(
     "Active states (comma-separated — Symphony dispatches items in these)",
@@ -210,7 +293,7 @@ async function main() {
   // ── 6. Filtering ──────────────────────────────────────
   head("Filters");
   info("Strongly recommended: only dispatch issues assigned to a bot user.");
-  const assignee = (await ask(`Assignee filter (leave blank to dispatch all in active_states)`)).trim();
+  const assignee = (await ask(`Assignee filter (leave blank to dispatch all in active_states)`, { default: "" })).trim();
   if (assignee) ok(`only items assigned to ${assignee}`);
   else warn("no assignee filter — Symphony will pick up every item in active_states");
 
@@ -347,14 +430,14 @@ async function main() {
   info(`  · ${C.dim}'Comment on the issue at start and PR-open instead of changing Status.'${C.reset}`);
   info(`  · ${C.dim}'Use pnpm test and pnpm lint; deploy to Vercel preview before verify.'${C.reset}`);
   info(`  · ${C.dim}'When IRIS blocks, also assign a human reviewer (gh issue edit --add-assignee).'${C.reset}`);
-  const brief = (await ask("Brief (blank = default status-driven)")).trim();
+  const brief = (await ask("Brief (blank = default status-driven)", { default: "" })).trim();
 
   // ── 9c. Eager workspace-recipe bootstrap ─────────────
   // Probe the project's most-common repo, shallow-clone it, and have the LLM
   // skill author a workspace-cache recipe NOW so the first dispatch hits a
   // warm cache. Skipped on `--no-eager-bootstrap`. All failures are
   // non-fatal — workflow authoring proceeds either way.
-  if (!WIZARD_FLAGS.noEagerBootstrap) {
+  if (WIZARD_FLAGS.eagerBootstrap) {
     head("Workspace cache (eager recipe priming)");
     info("Probing the Project for a primary repo, then having the LLM author a recipe.");
     info("Skip with `--no-eager-bootstrap` if you want the daemon to do this lazily.");
@@ -465,7 +548,9 @@ async function main() {
   out(`    node dist/src/cli.js --workflow ${C.dim}${workflowPath}${C.reset}${enableConsole ? ` --port ${port}` : ""}`);
   if (enableConsole) out(`  Then visit  ${C.cyan}http://127.0.0.1:${port}/${C.reset}`);
 
-  const startNow = await askYesNo("Start the daemon now?", true);
+  // Default true interactively, false in --yes mode (CI/scripted setup
+  // shouldn't auto-launch a long-running process).
+  const startNow = await askYesNo("Start the daemon now?", !WIZARD_FLAGS.yes);
   if (!startNow) exit(0);
   rl.close();
   const args = [resolve(repoRoot, "dist", "src", "cli.js"), "--workflow", workflowPath];
@@ -669,7 +754,7 @@ function workflowSlug(project) {
   return slug(project?.title ?? "default");
 }
 
-async function maybeAddNeedsHumanOption(token, projectId, options, desiredName) {
+async function maybeAddNeedsHumanOption(graphqlFn, fieldId, options, desiredName) {
   const lc = desiredName.toLowerCase();
   if (options.some((o) => o.name.toLowerCase() === lc)) return options;
 
@@ -682,36 +767,11 @@ async function maybeAddNeedsHumanOption(token, projectId, options, desiredName) 
   }
 
   try {
-    const fieldData = await graphql(token, `
-      query($id: ID!) {
-        node(id: $id) {
-          ... on ProjectV2 {
-            field(name: "Status") {
-              ... on ProjectV2SingleSelectField { id, options { id, name, color, description } }
-            }
-          }
-        }
-      }
-    `, { id: projectId });
-    const fieldId = fieldData.node?.field?.id;
-    const existing = fieldData.node?.field?.options ?? [];
-    if (!fieldId) throw new Error("Status field not found");
-
-    const merged = [
-      ...existing.map((o) => ({ name: o.name, color: o.color ?? "GRAY", description: o.description ?? "" })),
-      { name: desiredName, color: "ORANGE", description: "Symphony parks IRIS-blocked items here for human resolution." },
-    ];
-
-    const updated = await graphql(token, `
-      mutation($fieldId: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]!) {
-        updateProjectV2Field(input: { fieldId: $fieldId, singleSelectOptions: $options }) {
-          projectV2Field {
-            ... on ProjectV2SingleSelectField { options { id, name } }
-          }
-        }
-      }
-    `, { fieldId, options: merged });
-    const newOptions = updated.updateProjectV2Field?.projectV2Field?.options ?? [];
+    const newOptions = await addStatusOption(graphqlFn, fieldId, options, {
+      name: desiredName,
+      color: "ORANGE",
+      description: "Symphony parks IRIS-blocked items here for human resolution.",
+    });
     ok(`added '${desiredName}' — current options: ${newOptions.map((o) => o.name).join(", ")}`);
     return newOptions;
   } catch (error) {
@@ -722,11 +782,9 @@ async function maybeAddNeedsHumanOption(token, projectId, options, desiredName) 
 }
 
 async function resolveProjectByUrl(token, url) {
-  const match = url.match(/github\.com\/(orgs|users)\/([^/]+)\/projects\/(\d+)/);
-  if (!match) return null;
-  const [, scope, owner, numStr] = match;
-  const number = parseInt(numStr, 10);
-  const isOrg = scope === "orgs";
+  const parsed = parseProjectUrl(url);
+  if (!parsed) return null;
+  const isOrg = parsed.scope === "orgs";
   const data = await graphql(token, `
     query($owner: String!, $number: Int!) {
       ${isOrg ? "organization" : "user"}(login: $owner) {
@@ -737,7 +795,7 @@ async function resolveProjectByUrl(token, url) {
         } }
       }
     }
-  `, { owner, number });
+  `, { owner: parsed.owner, number: parsed.number });
   return data[isOrg ? "organization" : "user"]?.projectV2 ?? null;
 }
 
@@ -850,49 +908,10 @@ async function eagerBootstrapRecipe(repoFullName, token) {
   }
 }
 
-async function fetchStatusOptions(token, projectId) {
-  const data = await graphql(token, `
-    query($id: ID!) {
-      node(id: $id) {
-        ... on ProjectV2 {
-          field(name: "Status") {
-            ... on ProjectV2SingleSelectField { id, name, options { id, name } }
-          }
-        }
-      }
-    }
-  `, { id: projectId });
-  return data.node?.field?.options ?? [];
-}
-
-async function graphql(token, query, variables) {
-  const response = await fetch("https://api.github.com/graphql", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-      "user-agent": "symphony-init/0.1",
-    },
-    body: JSON.stringify({ query, variables: variables ?? null }),
-  });
-  if (!response.ok) throw new Error(`HTTP ${response.status}: ${(await response.text()).slice(0, 200)}`);
-  const body = await response.json();
-  if (body.errors?.length) throw new Error(body.errors.map((e) => e.message).join("; "));
-  return body.data;
-}
-
-function parseList(value) {
-  return value.split(",").map((s) => s.trim()).filter(Boolean);
-}
-
 function validateAgainstOptions(label, values, options) {
   const optionNames = new Set(options.map((o) => o.name.toLowerCase()));
   const missing = values.filter((v) => !optionNames.has(v.toLowerCase()));
   if (missing.length) warn(`${label}: ${missing.join(", ")} not on this Project's Status field — fix in the GitHub UI before running.`);
-}
-
-function slug(value) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32) || "default";
 }
 
 function runStreamed(command, args, options) {

@@ -40,6 +40,22 @@ to the prompt and the wizard handles the rest — including writing your
 fast path; the rest of this document is for operators who want to know
 what's happening behind the prompts, run things manually, or troubleshoot.
 
+The wizard accepts a few flags:
+
+```bash
+./scripts/init.sh                        # interactive (default)
+./scripts/init.sh --no-eager-bootstrap   # skip the LLM recipe priming step
+./scripts/init.sh --project=<url>        # skip the project picker
+./scripts/init.sh --yes --project=<url>  # non-interactive (CI / scripted)
+```
+
+Non-interactive mode (`--yes`) accepts every default and never prompts.
+It requires `GITHUB_TOKEN` exported and `--project=<url>` set, refuses to
+auto-launch the daemon (prints the run command instead), and exits with a
+clear message if any prompt would have needed interactive input. For
+fully reproducible setups, pair it with `SYMPHONY_CACHE_DIR` and a pinned
+`SYMPHONY_CLAUDE_BIN` / `SYMPHONY_CODEX_BIN`.
+
 ### Prerequisites the wizard checks for
 
 | Component | Why it's needed | Install if missing |
@@ -73,7 +89,11 @@ it the scopes above, generate a fine-grained PAT for the daemon, and
 ### What the wizard writes
 
 Running `./scripts/init.sh` produces a `WORKFLOW.md` (path of your choosing,
-defaults to `./WORKFLOW.md`) that contains:
+defaults to `./WORKFLOW.md`). If your project has no Status field at all,
+the wizard offers to create one with the four canonical options
+(`Todo`, `In Progress`, `Done`, `Needs Human`) — say yes and it's gone.
+
+The generated `WORKFLOW.md` contains:
 
 - `tracker` — pointed at the Project you picked, with the active / terminal /
   needs-human Status values you confirmed
@@ -197,6 +217,25 @@ If you'd rather hand-author:
 2. Edit `tracker.project_url`, `tracker.filters.assignee`, IRIS settings (or set `iris.enabled: false` and remove the `verify:` block), `verify.url_static`, the prompt body's repo-specific commands.
 3. `./scripts/preflight.sh ./WORKFLOW.md` — should exit 0.
 4. `node dist/src/cli.js --workflow ./WORKFLOW.md --port 8787`
+
+### Scripted / non-interactive setup
+
+When provisioning a host from automation (CI, an ops playbook, a
+container image), use `--yes` instead of hand-authoring:
+
+```bash
+export GITHUB_TOKEN="ghp_..."
+./scripts/init.sh --yes \
+  --project="https://github.com/orgs/<owner>/projects/<n>" \
+  --no-eager-bootstrap   # optional — skip the LLM recipe priming
+```
+
+This uses every default the interactive flow uses (active states from
+the project's Status field, IRIS off, console on port 8787, default
+workspace root, etc.), runs preflight, and exits without launching the
+daemon. The Status field is auto-created if missing. For full
+reproducibility, also pin the LLM CLIs:
+`SYMPHONY_CLAUDE_BIN="npx --yes @anthropic-ai/claude-code@1.x.y"`.
 
 ## Adding a new repo
 

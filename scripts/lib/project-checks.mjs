@@ -4,6 +4,8 @@
 // the wizard — they surface so the operator can see exactly what's broken
 // before committing to a config.
 
+import { graphql } from "./github-graphql.mjs";
+
 export async function runProjectChecks({ token, project, assignee, activeStates, fetchImpl = fetch }) {
   const checks = [];
 
@@ -96,22 +98,6 @@ export function formatChecks(checks, colors) {
 
 export function checksFailed(checks) {
   return checks.some((c) => c.status === "fail");
-}
-
-async function graphql(token, query, variables, fetchImpl) {
-  const response = await fetchImpl("https://api.github.com/graphql", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-      "user-agent": "symphony-init/0.1",
-    },
-    body: JSON.stringify({ query, variables: variables ?? null }),
-  });
-  if (!response.ok) throw new Error(`HTTP ${response.status}: ${(await response.text()).slice(0, 200)}`);
-  const body = await response.json();
-  if (body.errors?.length) throw new Error(body.errors.map((e) => e.message).join("; "));
-  return body.data;
 }
 
 function shortMessage(error) {

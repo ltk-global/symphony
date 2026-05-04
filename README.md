@@ -96,7 +96,9 @@ GitHub Project (v2)            ~/.symphony/<hash>/
 node dist/src/cli.js --workflow ./WORKFLOW.md [--port 8787] [--once]
 node dist/src/cli-aggregator.js --config ./aggregator.yaml [--port 9000]
 ./scripts/setup.sh         # one-time install + build
-./scripts/init.sh          # interactive setup wizard (add --no-eager-bootstrap to skip recipe priming)
+./scripts/init.sh          # interactive setup wizard
+./scripts/init.sh --yes --project=<url>      # non-interactive (CI / scripted)
+./scripts/init.sh --no-eager-bootstrap       # skip the LLM recipe priming
 ./scripts/preflight.sh     # validate config + GitHub access without dispatching
 
 symphony recipe list                  # enumerate cached bootstrap recipes
