@@ -301,13 +301,21 @@ async function main() {
   head("Filters");
   info("Strongly recommended: only dispatch issues assigned to a bot user.");
   let assignee = (await ask(`Assignee filter (leave blank to dispatch all in active_states)`, { default: "" })).trim();
+  // Whether we just walked the operator through bot-account setup. If so,
+  // the daemon must be started with the BOT's PAT, not the operator's
+  // GITHUB_TOKEN that we used for the wizard. We refuse to auto-launch in
+  // that case (see end of main()).
+  let walkedThroughBotSetup = false;
   if (assignee) {
     await validateAssignee(projectGraphql, assignee, project);
   } else if (!WIZARD_FLAGS.yes) {
     const setup = await askYesNo("No assignee filter set. Walk through bot-account setup now?", false);
     if (setup) {
       const botLogin = await setupBotWalkthrough(projectGraphql, project);
-      if (botLogin) assignee = botLogin;
+      if (botLogin) {
+        assignee = botLogin;
+        walkedThroughBotSetup = true;
+      }
     }
   }
   if (assignee) ok(`only items assigned to ${assignee}`);
@@ -564,6 +572,19 @@ async function main() {
   out(`    node dist/src/cli.js --workflow ${C.dim}${workflowPath}${C.reset}${enableConsole ? ` --port ${port}` : ""}`);
   if (enableConsole) out(`  Then visit  ${C.cyan}http://127.0.0.1:${port}/${C.reset}`);
 
+  // Refuse to auto-start when the bot-setup walkthrough ran: we'd launch
+  // the daemon with the operator's GITHUB_TOKEN (still in `preflightEnv`),
+  // so verify-stage actions and tracker writes would post as the operator
+  // rather than the bot the operator just configured. The walkthrough
+  // already printed "export GITHUB_TOKEN=ghp_<bot's token>" — surface that
+  // instruction one more time and exit cleanly.
+  if (walkedThroughBotSetup) {
+    out("");
+    warn("Skipping auto-start: you just configured a bot account.");
+    info(`Open a new shell, ${C.bold}export GITHUB_TOKEN=ghp_<bot's token>${C.reset}, then run the command above.`);
+    info("(The wizard's GITHUB_TOKEN is your personal one, used to author + validate the workflow.)");
+    exit(0);
+  }
   // Default true interactively, false in --yes mode (CI/scripted setup
   // shouldn't auto-launch a long-running process).
   const startNow = await askYesNo("Start the daemon now?", !WIZARD_FLAGS.yes);
