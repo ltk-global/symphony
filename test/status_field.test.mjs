@@ -94,12 +94,16 @@ describe("addStatusOption", () => {
 });
 
 describe("createStatusField", () => {
-  it("creates a Status field with Todo / In Progress / Done / Needs Human", async () => {
+  it("creates the field then populates options via updateProjectV2Field", async () => {
     const graphql = makeFakeGraphql([
-      ["createProjectV2Field", (vars) => ({
+      ["createProjectV2Field", () => ({
         createProjectV2Field: {
+          projectV2Field: { id: "NEW_FIELD", name: "Status", options: [] },
+        },
+      })],
+      ["updateProjectV2Field", (vars) => ({
+        updateProjectV2Field: {
           projectV2Field: {
-            id: "NEW_FIELD",
             options: vars.options.map((o, i) => ({ id: `n${i}`, name: o.name, color: o.color, description: o.description })),
           },
         },
@@ -109,10 +113,11 @@ describe("createStatusField", () => {
     expect(field.id).toBe("NEW_FIELD");
     expect(field.options.map((o) => o.name)).toEqual(DEFAULT_STATUS_OPTIONS.map((o) => o.name));
     expect(field.options.map((o) => o.name)).toEqual(["Todo", "In Progress", "Done", "Needs Human"]);
-    expect(graphql.calls[0].variables).toMatchObject({
-      projectId: "PROJ_ID",
-      name: "Status",
-    });
+    // Two GraphQL round-trips: create empty field, then add options.
+    expect(graphql.calls).toHaveLength(2);
+    expect(graphql.calls[0].variables).toMatchObject({ projectId: "PROJ_ID", name: "Status" });
+    expect(graphql.calls[0].variables.options).toBeUndefined();
+    expect(graphql.calls[1].variables.options.map((o) => o.name)).toEqual(["Todo", "In Progress", "Done", "Needs Human"]);
   });
 });
 
@@ -133,10 +138,12 @@ describe("ensureStatusField", () => {
   it("creates the field when missing and autoCreate=true", async () => {
     const graphql = makeFakeGraphql([
       ["field(name: \"Status\")", () => ({ node: { field: null } })],
-      ["createProjectV2Field", (vars) => ({
-        createProjectV2Field: {
+      ["createProjectV2Field", () => ({
+        createProjectV2Field: { projectV2Field: { id: "NEW", name: "Status", options: [] } },
+      })],
+      ["updateProjectV2Field", (vars) => ({
+        updateProjectV2Field: {
           projectV2Field: {
-            id: "NEW",
             options: vars.options.map((o, i) => ({ id: `i${i}`, name: o.name, color: o.color, description: o.description })),
           },
         },
