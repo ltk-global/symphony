@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { userExists, userIsOrgMember } from "../scripts/lib/bot-probe.mjs";
+import { userExists, resolveUserLogin, userIsOrgMember } from "../scripts/lib/bot-probe.mjs";
 
 function makeFakeGraphql(handlers) {
   const calls = [];
@@ -14,34 +14,53 @@ function makeFakeGraphql(handlers) {
   return fn;
 }
 
-describe("userExists", () => {
-  it("returns true for an existing user", async () => {
+describe("resolveUserLogin", () => {
+  it("returns the canonical login when the user exists", async () => {
+    // Caller types "acme-bot", GitHub stores "Acme-Bot" — the helper
+    // returns GitHub's canonical form so the workflow's filters.assignee
+    // matches the runtime issue.assignees array exactly.
     const graphql = makeFakeGraphql([
-      ["user(login: $login)", () => ({ user: { id: "U_x", login: "acme-bot" } })],
+      ["user(login: $login)", () => ({ user: { login: "Acme-Bot" } })],
     ]);
-    expect(await userExists(graphql, "acme-bot")).toBe(true);
+    expect(await resolveUserLogin(graphql, "acme-bot")).toBe("Acme-Bot");
   });
 
-  it("returns false when the user does not exist (null user)", async () => {
+  it("returns null when the user does not exist (null user)", async () => {
     const graphql = makeFakeGraphql([
       ["user(login: $login)", () => ({ user: null })],
     ]);
-    expect(await userExists(graphql, "nope")).toBe(false);
+    expect(await resolveUserLogin(graphql, "nope")).toBeNull();
   });
 
-  it("returns false when GitHub raises a 'could not resolve to a User' error", async () => {
+  it("returns null when GitHub raises a 'could not resolve to a User' error", async () => {
     // GitHub's actual behavior: top-level GraphQL error rather than `user: null`.
     const graphql = makeFakeGraphql([
       ["user(login: $login)", () => { throw new Error("Could not resolve to a User with the login of 'nope-asdf-1234'."); }],
     ]);
-    expect(await userExists(graphql, "nope-asdf-1234")).toBe(false);
+    expect(await resolveUserLogin(graphql, "nope-asdf-1234")).toBeNull();
   });
 
   it("propagates other GraphQL errors so the caller can show them", async () => {
     const graphql = makeFakeGraphql([
       ["user(login: $login)", () => { throw new Error("API rate limit exceeded"); }],
     ]);
-    await expect(userExists(graphql, "x")).rejects.toThrow("rate limit");
+    await expect(resolveUserLogin(graphql, "x")).rejects.toThrow("rate limit");
+  });
+});
+
+describe("userExists", () => {
+  it("is the boolean coercion of resolveUserLogin", async () => {
+    const graphql = makeFakeGraphql([
+      ["user(login: $login)", () => ({ user: { login: "Acme-Bot" } })],
+    ]);
+    expect(await userExists(graphql, "acme-bot")).toBe(true);
+  });
+
+  it("returns false on null", async () => {
+    const graphql = makeFakeGraphql([
+      ["user(login: $login)", () => ({ user: null })],
+    ]);
+    expect(await userExists(graphql, "nope")).toBe(false);
   });
 });
 

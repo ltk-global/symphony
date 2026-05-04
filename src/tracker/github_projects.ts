@@ -82,8 +82,13 @@ export function normalizeProjectItem(item: any, options: NormalizeOptions): Issu
 export function applyIssueFilters<T extends Pick<Issue, "labels" | "assignees">>(issues: T[], filters: IssueFilters): T[] {
   const required = (filters.labelRequired ?? []).map((label) => label.toLowerCase());
   const excluded = new Set((filters.labelExcluded ?? []).map((label) => label.toLowerCase()));
+  // GitHub logins are case-insensitive but stored canonical-cased. A
+  // workflow that writes `Acme-Bot` would silently match nothing against
+  // an `acme-bot` assignment. Compare lowercase on both sides — matches
+  // the existing label behavior and tolerates hand-authored configs.
+  const wantAssignee = filters.assignee?.toLowerCase();
   return issues.filter((issue) => {
-    if (filters.assignee && !issue.assignees.includes(filters.assignee)) return false;
+    if (wantAssignee && !issue.assignees.some((a) => a.toLowerCase() === wantAssignee)) return false;
     if (!required.every((label) => issue.labels.includes(label))) return false;
     if (issue.labels.some((label) => excluded.has(label))) return false;
     return true;

@@ -25,18 +25,28 @@ const ORG_MEMBER_QUERY = `
   }
 `;
 
-export async function userExists(graphql, login) {
+// Resolve a GitHub login to its canonical-cased form, or null if unknown.
+// `user(login:)` is case-insensitive but always returns the login in the
+// user's chosen casing; using THAT as the workflow's `filters.assignee`
+// avoids a runtime mismatch when the operator typed a different casing.
+// Truthy → user exists (and the string IS the canonical form).
+export async function resolveUserLogin(graphql, login) {
   try {
     const data = await graphql(USER_EXISTS_QUERY, { login });
-    return Boolean(data?.user?.login);
+    return data?.user?.login ?? null;
   } catch (error) {
     // GitHub returns a top-level GraphQL error (not `user: null`) when the
-    // login is unknown. Recognize that shape and return false; let other
+    // login is unknown. Recognize that shape and return null; let other
     // errors (rate limit, network, scope) propagate so callers can surface them.
     const msg = error instanceof Error ? error.message : String(error);
-    if (/could not resolve to a user/i.test(msg)) return false;
+    if (/could not resolve to a user/i.test(msg)) return null;
     throw error;
   }
+}
+
+// Convenience boolean form for callers that don't need the canonical login.
+export async function userExists(graphql, login) {
+  return Boolean(await resolveUserLogin(graphql, login));
 }
 
 export async function userIsOrgMember(graphql, org, login) {

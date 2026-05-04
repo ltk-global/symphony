@@ -24,7 +24,7 @@ import {
   addStatusOption,
 } from "./lib/status-field.mjs";
 import { graphql, parseProjectUrl } from "./lib/github-graphql.mjs";
-import { userExists, userIsOrgMember } from "./lib/bot-probe.mjs";
+import { resolveUserLogin, userIsOrgMember } from "./lib/bot-probe.mjs";
 import { tmpdir } from "node:os";
 import { resolve, dirname, join } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
@@ -307,7 +307,7 @@ async function main() {
   // that case (see end of main()).
   let walkedThroughBotSetup = false;
   if (assignee) {
-    await validateAssignee(projectGraphql, assignee, project);
+    assignee = await validateAssignee(projectGraphql, assignee, project);
   } else if (!WIZARD_FLAGS.yes) {
     const setup = await askYesNo("No assignee filter set. Walk through bot-account setup now?", false);
     if (setup) {
@@ -836,26 +836,37 @@ async function maybeAddNeedsHumanOption(graphqlFn, fieldId, options, desiredName
 // (Asymmetric with setupBotWalkthrough's "retry on probe error" — by
 // design: there the operator is actively walking through, so retrying
 // makes sense; here the operator already knows the answer.)
+// Returns the canonical-cased login, or the original `login` if the probe
+// failed (best-effort). Callers should write this back into the workflow
+// so a typo'd `Acme-Bot` (operator) vs `acme-bot` (GitHub) doesn't break
+// runtime issue.assignees matching.
 async function validateAssignee(projectGraphql, login, project) {
   try {
-    const exists = await userExists(projectGraphql, login);
-    if (!exists) {
+    const canonical = await resolveUserLogin(projectGraphql, login);
+    if (!canonical) {
       warn(`'${login}' is not a known GitHub user. Daemon will dispatch nothing.`);
       const proceed = await askYesNo("Use this assignee anyway?", false);
       if (!proceed) exit(1);
-      return;
+      return login;
     }
+    if (canonical !== login) info(`canonical casing: ${canonical} (was '${login}')`);
     const owner = project.owner?.login;
     const isOrg = project.owner?.__typename === "Organization";
     if (isOrg && owner) {
-      const isMember = await userIsOrgMember(projectGraphql, owner, login);
-      if (isMember) ok(`'${login}' exists and is a member of ${owner}`);
-      else warn(`'${login}' exists but is not a member of ${owner} — invite via https://github.com/orgs/${owner}/people`);
+      try {
+        const isMember = await userIsOrgMember(projectGraphql, owner, canonical);
+        if (isMember) ok(`'${canonical}' exists and is a member of ${owner}`);
+        else warn(`'${canonical}' exists but is not a member of ${owner} — invite via https://github.com/orgs/${owner}/people`);
+      } catch (error) {
+        warn(`couldn't probe org membership: ${error instanceof Error ? error.message : error}`);
+      }
     } else {
-      ok(`'${login}' exists on GitHub`);
+      ok(`'${canonical}' exists on GitHub`);
     }
+    return canonical;
   } catch (error) {
     warn(`couldn't validate assignee: ${error instanceof Error ? error.message : error}`);
+    return login;
   }
 }
 
@@ -885,12 +896,17 @@ async function setupBotWalkthrough(projectGraphql, project) {
   stepLabel(2, "Confirm the bot's username");
   let botLogin = "";
   while (true) {
-    botLogin = (await ask("Bot's GitHub username")).trim();
-    if (!botLogin) { warn("Required."); continue; }
+    const typed = (await ask("Bot's GitHub username")).trim();
+    if (!typed) { warn("Required."); continue; }
     try {
-      const exists = await userExists(projectGraphql, botLogin);
-      if (exists) { ok(`account exists: ${botLogin}`); break; }
-      warn(`No GitHub user named '${botLogin}'.`);
+      const canonical = await resolveUserLogin(projectGraphql, typed);
+      if (canonical) {
+        if (canonical !== typed) info(`canonical casing: ${canonical} (was '${typed}')`);
+        botLogin = canonical;
+        ok(`account exists: ${botLogin}`);
+        break;
+      }
+      warn(`No GitHub user named '${typed}'.`);
       const retry = await askYesNo("Try a different username?", true);
       if (!retry) return null;
     } catch (error) {
@@ -927,18 +943,45 @@ async function setupBotWalkthrough(projectGraphql, project) {
   }
 
   out("");
-  stepLabel(totalSteps, "Generate a PAT for the bot");
+  stepLabel(totalSteps, "Generate + validate the bot's PAT");
   out(`    Sign out, sign in as ${C.bold}${botLogin}${C.reset}, then open:`);
   link(`https://github.com/settings/tokens/new?scopes=repo,project&description=${tokenDescription}`);
-  info("    Copy the token (starts with 'ghp_'); save it somewhere safe.");
-  await ask("Press enter when the PAT is generated and saved", { default: "" });
+  info("    Copy the token (starts with 'ghp_').");
+  // Paste back so we can confirm the PAT actually authenticates as the bot.
+  // Otherwise the wizard reports "validated" using the operator's token
+  // while the daemon would silently fail on first tick under the bot's PAT.
+  // The token is held in memory only — never written to disk by the wizard.
+  while (true) {
+    const botToken = await ask("Paste the bot's PAT (input hidden)", {
+      hidden: true,
+      validate: (v) => (v.length < 20 ? "Too short — paste the full token." : null),
+    });
+    try {
+      const probed = await graphql(botToken, `query { viewer { login } }`);
+      const viewerLogin = probed?.viewer?.login;
+      if (!viewerLogin) {
+        warn("Token authenticated but viewer.login is empty — unusable.");
+      } else if (viewerLogin.toLowerCase() === botLogin.toLowerCase()) {
+        ok(`PAT authenticates as ${viewerLogin}`);
+        break;
+      } else {
+        warn(`PAT belongs to '${viewerLogin}', not '${botLogin}'.`);
+      }
+    } catch (error) {
+      warn(`PAT validation failed: ${error instanceof Error ? error.message : error}`);
+    }
+    const retry = await askYesNo("Re-paste the PAT?", true);
+    if (!retry) return null;
+  }
 
   // Reminder — the daemon needs the BOT's token at runtime, not the operator's.
   out("");
   ok(`bot setup complete: ${C.bold}${botLogin}${C.reset}`);
   info("When you start the daemon, export GITHUB_TOKEN to the BOT's PAT, not your own:");
   info(`  ${C.bold}export GITHUB_TOKEN=ghp_<bot's token>${C.reset}`);
-  info("(Your token stays valid for now — preflight uses it to author + validate the workflow.)");
+  info("(Your token stays valid for the rest of this wizard run — it authors and");
+  info("validates the workflow. The bot PAT was checked just now; a deeper");
+  info("preflight under the bot token runs after you re-export it.)");
   return botLogin;
 }
 

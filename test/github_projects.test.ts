@@ -152,6 +152,18 @@ describe("GitHub Projects tracker helpers", () => {
     ).toEqual(["a#1"]);
   });
 
+  it("matches assignees case-insensitively (GitHub logins are stored canonical-cased)", () => {
+    // Workflow author wrote `Acme-Bot` but the issue's assignees array has
+    // GitHub's canonical form `acme-bot`. The filter MUST still match.
+    const issues = [
+      { identifier: "a#1", assignees: ["acme-bot"], labels: [], state: "Todo" },
+      { identifier: "a#2", assignees: ["someone-else"], labels: [], state: "Todo" },
+    ] as any[];
+    expect(
+      applyIssueFilters(issues, { assignee: "Acme-Bot" }).map((i) => i.identifier),
+    ).toEqual(["a#1"]);
+  });
+
   it("resolves owner/number projects for user owners when organization lookup misses", async () => {
     const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body));
