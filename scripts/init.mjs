@@ -911,7 +911,17 @@ async function eagerBootstrapRecipe(repoFullName, token) {
 function validateAgainstOptions(label, values, options) {
   const optionNames = new Set(options.map((o) => o.name.toLowerCase()));
   const missing = values.filter((v) => !optionNames.has(v.toLowerCase()));
-  if (missing.length) warn(`${label}: ${missing.join(", ")} not on this Project's Status field — fix in the GitHub UI before running.`);
+  if (!missing.length) return;
+  // Interactively the operator can correct the typo / re-run; in --yes mode
+  // there's no recovery, so fail rather than write a workflow that won't
+  // dispatch (e.g. defaulting to "Todo, In Progress" on a Backlog/Doing project).
+  if (WIZARD_FLAGS.yes) {
+    fail(`${label}: ${missing.join(", ")} not on this Project's Status field`);
+    info(`Available: ${options.map((o) => o.name).join(", ")}`);
+    info("Re-run interactively (without --yes) to choose values that exist on the project.");
+    exit(1);
+  }
+  warn(`${label}: ${missing.join(", ")} not on this Project's Status field — fix in the GitHub UI before running.`);
 }
 
 function runStreamed(command, args, options) {

@@ -22,12 +22,14 @@ export async function graphql(token, query, variables, fetchImpl = globalThis.fe
   return body.data;
 }
 
-// Parse a GitHub Projects v2 URL like:
+// Parse a GitHub Projects v2 URL. Accepts the canonical form:
 //   https://github.com/orgs/foo/projects/3
-//   https://github.com/users/foo/projects/3
-// Returns `{ scope, owner, number }` or null. Anchored so it doesn't match
-// substrings hidden inside another URL.
-const PROJECT_URL_RE = /^https?:\/\/github\.com\/(orgs|users)\/([^/]+)\/projects\/(\d+)\/?$/;
+// and the common pasted-from-address-bar variants:
+//   https://github.com/orgs/foo/projects/3/views/1
+//   https://github.com/users/foo/projects/3?pane=info
+// Returns `{ scope, owner, number }` or null. Anchored on scheme/host so it
+// can't match a substring hidden inside an unrelated URL.
+const PROJECT_URL_RE = /^https?:\/\/github\.com\/(orgs|users)\/([^/]+)\/projects\/(\d+)(?:[/?].*)?$/;
 
 export function parseProjectUrl(url) {
   const match = url.match(PROJECT_URL_RE);
