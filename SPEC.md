@@ -161,19 +161,48 @@ Notes:
 - The orchestrator does **not** transition statuses itself. The agent does, via its own `gh` CLI / GraphQL tool calls. Verify stage may transition (`needs_human_state` on blocked, on_pass/on_fail transitions in `verify`).
 - `needs_human_state` is the destination Status when an IRIS `blocked` event is received and `iris.on_blocked: needs_human` (default). Must exist on the project.
 
-#### 5.3.2 `polling`, `workspace`, `hooks` (INHERITED)
+#### 5.3.2 `polling`, `workspace`, `hooks` (MODIFIED)
 
-Same as upstream Symphony §5.3.2/3/4. Defaults: `polling.interval_ms: 30000`, `workspace.root: <system-temp>/symphony_workspaces`, `hooks.timeout_ms: 60000`. Hook scripts (`after_create`, `before_run`, `after_run`, `before_remove`) run via `bash -lc` with the workspace as cwd.
+`polling` and `hooks` carry over from upstream §5.3.2/3/4. Defaults: `polling.interval_ms: 30000`, `hooks.timeout_ms: 60000`. Hook scripts (`after_create`, `before_run`, `after_run`, `before_remove`) run via `bash -lc` with the workspace as cwd.
 
-A common pattern for this fork's `after_create` hook:
+`workspace` adds an optional `cache` block (NEW in this fork):
+
+```yaml
+workspace:
+  root: ~/symphony_workspaces        # default: <system-temp>/symphony_workspaces
+  cache:
+    strategy: llm                    # "none" | "reference_only" | "llm" — default "llm"
+    review_required: false           # gate newly-authored recipes on operator approval
+    recipe_ttl_hours: 168            # regenerate even if inputs unchanged after this age
+```
+
+Strategies:
+
+- `none` — no caching; `after_create` runs against an empty workspace.
+- `reference_only` — orchestrator maintains a bare clone at `<cache_dir>/refs/<repoId>.git` and exposes its path via `SYMPHONY_REPO_REF`. Hook may pass it to `git clone --reference --dissociate` to skip bytes-on-the-wire.
+- `llm` — reference clone *plus* an LLM-authored bootstrap recipe (e.g. adapted `npm ci --prefer-offline`) at `<cache_dir>/recipes/<stem>.sh`. Path is exported as `SYMPHONY_RECIPE`. Recipes are validated (blocklist + secret patterns + `bash -n`) before persistence and may be quarantined or regenerated via the `symphony recipe …` CLI.
+
+Cache dir defaults to `~/.symphony-cache`; the `SYMPHONY_CACHE_DIR` env var overrides it. `SYMPHONY_REFS_DIR` can override the refs subdir independently. Recipe stem is `<sanitize(repoFullName)>.<8-char-sha256(repoFullName)>` to prevent collisions across owners.
+
+A common pattern for this fork's `after_create` hook (cache-aware):
 
 ```yaml
 hooks:
   after_create: |
-    # Clone the repo associated with this issue into the workspace.
-    # ${ISSUE_REPO_FULL_NAME} is exported by the orchestrator before hook execution.
-    git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git" .
+    # Clone the repo associated with this issue into the workspace, borrowing
+    # objects from the bare reference clone when one exists.
+    if [ -n "${SYMPHONY_REPO_REF:-}" ] && [ -d "$SYMPHONY_REPO_REF" ]; then
+      git clone --reference "$SYMPHONY_REPO_REF" --dissociate \
+        "https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git" .
+    else
+      git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git" .
+    fi
     git checkout -b "${ISSUE_BRANCH_NAME:-symphony/${ISSUE_WORKSPACE_KEY}}"
+  before_run: |
+    # Apply the cached bootstrap recipe when one is present and approved.
+    if [ -n "${SYMPHONY_RECIPE:-}" ] && [ -z "${SYMPHONY_RECIPE_DISABLED:-}" ] && [ -f "$SYMPHONY_RECIPE" ]; then
+      WORKSPACE="$ISSUE_WORKSPACE_PATH" source "$SYMPHONY_RECIPE"
+    fi
 ```
 
 Hook environment (NEW): the orchestrator exports these env vars before running any hook:
@@ -182,6 +211,10 @@ Hook environment (NEW): the orchestrator exports these env vars before running a
 - `ISSUE_REPO_FULL_NAME`, `ISSUE_BRANCH_NAME` (may be empty)
 - `ISSUE_WORKSPACE_KEY`, `ISSUE_WORKSPACE_PATH`
 - `SYMPHONY_ATTEMPT` (`null` first run, integer for retry/continuation)
+- `SYMPHONY_CACHE_DIR` — always set; cache root override surface
+- `SYMPHONY_REPO_REF` — set when `cache.strategy != none`; absolute path to the bare reference clone
+- `SYMPHONY_RECIPE` — set when `cache.strategy == llm` and a recipe exists; absolute path to the bootstrap script
+- `SYMPHONY_RECIPE_DISABLED` — set to `1` when the recipe exists but is `.pending` operator approval (`review_required: true`)
 
 #### 5.3.3 `agent` (MODIFIED)
 

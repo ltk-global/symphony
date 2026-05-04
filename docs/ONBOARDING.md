@@ -79,14 +79,82 @@ defaults to `./WORKFLOW.md`) that contains:
   needs-human Status values you confirmed
 - `tracker.filters.assignee` — only set if you provided one
 - `workspace.root` — `~/symphony_workspaces/<project-slug>` by default
-- `hooks.after_create` — clones `${ISSUE_REPO_FULL_NAME}` using `${GITHUB_TOKEN}`
+- `workspace.cache.strategy: llm` — enables reference-clone reuse + an
+  LLM-authored bootstrap recipe (skip with `./scripts/init.sh --no-eager-bootstrap`)
+- `hooks.after_create` — clones `${ISSUE_REPO_FULL_NAME}` using
+  `${GITHUB_TOKEN}` (with `--reference $SYMPHONY_REPO_REF` when set)
+- `hooks.before_run` — sources `$SYMPHONY_RECIPE` to apply the cached
+  bootstrap (`npm ci --prefer-offline`, etc.) when one is available
 - `agent` — the kind detected on PATH, with sensible defaults
 - `iris` + `verify` — only when you opt in
 - `server.port` — only when you enable the operator console
 - a Liquid prompt body that walks the agent through Status transitions, branch naming, PR creation, and (if IRIS is on) the `VERIFY_REQUESTED` handshake
 
+If `cache.strategy: llm` is selected, the wizard also pre-warms the recipe
+cache: it shallow-clones the project's primary repo, invokes the
+`symphony-workspace-bootstrap` skill to author a recipe, and persists it to
+`~/.symphony-cache/recipes/`. The first dispatch then arrives warm. Pass
+`--no-eager-bootstrap` to defer this — the daemon will lazily author on the
+second dispatch (the first runs without `SYMPHONY_RECIPE`).
+
 The file is intentionally small enough that you can edit it after running
 init — the wizard is a starting point, not a black box.
+
+### Workspace caching
+
+The wizard enables `workspace.cache.strategy: llm` by default. This gives
+every dispatch two warm-cache paths:
+
+| Cache | Where | Effect |
+|---|---|---|
+| Reference clone | `~/.symphony-cache/refs/<repoId>.git` (bare) | Subsequent `git clone --reference $SYMPHONY_REPO_REF` skips bytes-on-the-wire. |
+| Bootstrap recipe | `~/.symphony-cache/recipes/<stem>.{sh,json}` | LLM-authored install/setup script (e.g. `npm ci --prefer-offline`) sourced from `before_run`. |
+
+In practice, this is ~30s cold → ~1.5s warm per dispatch on a Node repo.
+
+**Strategy choices** (`workspace.cache.strategy` in WORKFLOW.md):
+
+- `none` — disable caching; `after_create` runs against an empty workspace.
+- `reference_only` — bare clone reuse only; no recipe authoring.
+- `llm` (default) — both caches; recipe authored on first miss via the
+  `symphony-workspace-bootstrap` skill.
+
+**Operator approval** (`workspace.cache.review_required: true`): newly-authored
+recipes land as `<stem>.sh.pending` with `SYMPHONY_RECIPE_DISABLED=1`
+exported to hooks. Run `symphony recipe approve <owner/repo>` to promote;
+`symphony recipe reject <owner/repo>` to discard. Useful when you want a
+human in the loop for the first recipe per repo.
+
+**`symphony recipe` CLI** — manage the cache without editing files by hand:
+
+```bash
+symphony recipe list                    # enumerate cached recipes + status
+symphony recipe show <owner/repo>       # print recipe body + manifest
+symphony recipe approve <owner/repo>    # promote .pending → final (review mode)
+symphony recipe reject <owner/repo>     # delete the .pending pair
+symphony recipe regen <owner/repo>      # force regeneration on next dispatch
+symphony recipe quarantine <owner/repo> # mark as "do not use" — falls back to canned template
+symphony recipe prune --force           # wipe all cached recipes
+```
+
+**Cache env vars exposed to hooks**:
+
+| var | when set | use |
+|---|---|---|
+| `SYMPHONY_CACHE_DIR` | always | Cache root override (default `~/.symphony-cache`). |
+| `SYMPHONY_REPO_REF` | `strategy != none` | Path to the bare reference clone — pass to `git clone --reference $SYMPHONY_REPO_REF --dissociate`. |
+| `SYMPHONY_RECIPE` | `strategy=llm` and recipe present | Absolute path to the recipe shell script — `WORKSPACE="$ISSUE_WORKSPACE_PATH" source "$SYMPHONY_RECIPE"`. |
+| `SYMPHONY_RECIPE_DISABLED` | `review_required: true` and recipe is `.pending` | Set to `1` so hooks can short-circuit an unreviewed recipe. |
+| `SYMPHONY_REFS_DIR` | always (defaults to `<SYMPHONY_CACHE_DIR>/refs`) | Override the reference-clone root only. |
+
+**Safety**: every recipe is run through the validator
+(`src/workspace/recipe_validator.ts`) before persistence — secret patterns,
+pipe-to-shell, destructive `rm`, paths escaping the workspace, and ~20
+other classes are rejected, plus a `bash -n` syntax check. A rejected
+recipe falls back to a canned template, not the dispatch failing.
+
+The full operator reference (paths, manifest shape, LLM CLI resolution,
+consent model) lives in [`docs/CACHING.md`](CACHING.md).
 
 ### Browser verify with a local tunnel
 
@@ -216,6 +284,8 @@ For a workflow at `/path/to/WORKFLOW.md`:
 | `~/.symphony/<sha256(path)[:12]>/events.jsonl` | every orchestrator event, append-only | until you rotate it |
 | `~/.symphony/<sha256(path)[:12]>/turns/<issueId>/<ts>-t<seq>.jsonl` | raw stream-json from each agent turn | until you rotate it |
 | `<workspace.root>/<sanitized issue id>/` | per-issue git workspace, recreated per dispatch | removed when issue hits a `terminal_state` |
+| `~/.symphony-cache/refs/<repoId>.git/` | bare reference clones (cache.strategy ≠ none) | survives across dispatches; manage via `git -C` or `rm -rf` |
+| `~/.symphony-cache/recipes/<stem>.{sh,json,…}` | LLM-authored bootstrap recipes (cache.strategy=llm) | survives across dispatches; manage via `symphony recipe …` |
 | stdout (pino JSON) | structured log lines | wherever you redirect — systemd journal, launchd `StandardOutPath`, etc. |
 
 Override the data dir with top-level `data_dir:` in front matter (accepts
@@ -413,6 +483,9 @@ Per-issue and cumulative token spend live in two places:
 | Operator console says "no events yet" | `events.jsonl` doesn't exist or the daemon hasn't ticked yet | wait one poll interval; if the file path is wrong, check the `daemon_reload` event in the log or `GET /api/v1/state.dataDir` |
 | Token totals seem too high | `usage` events are summed per emit; absolute-vs-delta dedup is a known TODO | sanity-check by summing only `turn_completed` events from `events.jsonl` (see "Token cost monitoring" above) |
 | Operator console is unreachable | server crashed silently or wasn't enabled | check `symphony.err.log` for "console_server listening"; confirm `--port` or `server.port` is set |
+| `ensure_bare_clone_failed_skipping_reference` on every dispatch | usually a token-scope issue, an expired token, or the repo doesn't exist for this account | confirm `GITHUB_TOKEN` has `repo` scope; `gh repo view <owner/repo>` should succeed. The dispatch will still proceed, just without the reference cache. |
+| `SYMPHONY_RECIPE_DISABLED=1` exported, hook silently skips bootstrap | `workspace.cache.review_required: true` and the recipe is still `.pending` | run `symphony recipe approve <owner/repo>` (or set `review_required: false` if you trust the validator alone) |
+| Recipe authoring fails / takes forever | LLM CLI not on PATH, or `npx --yes` is fetching cold | first run resolves `claude` / `codex` via npx (~5–10s cold); set `SYMPHONY_CLAUDE_BIN` / `SYMPHONY_CODEX_BIN` to a pinned local install if you want determinism |
 
 ## Multi-daemon hygiene (Pattern B)
 

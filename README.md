@@ -49,6 +49,13 @@ Total time from clone to live dashboard: ~3 minutes.
   the agent's change is live before transitioning the item to "In Review".
   The wizard handles IRIS token entry and offers to set up an
   ngrok or cloudflared tunnel for verifying against your local dev server.
+- **Workspace caching** — bare-clone reference cache plus
+  LLM-authored bootstrap recipes (e.g. `npm ci --prefer-offline` adapted
+  to your repo's lockfile). Each subsequent dispatch reuses both, cutting
+  workspace-prep time from ~30s cold to ~1.5s warm. Sandboxed via a
+  validator (blocklist + secret patterns + `bash -n`) and gated by
+  `workspace.cache.review_required` for operator approval. See
+  [`docs/CACHING.md`](docs/CACHING.md).
 
 ## How it works
 
@@ -77,8 +84,9 @@ GitHub Project (v2)            ~/.symphony/<hash>/
 | | |
 |---|---|
 | [`docs/ONBOARDING.md`](docs/ONBOARDING.md)        | Operator guide — setup, multi-daemon hygiene, observability, troubleshooting |
+| [`docs/CACHING.md`](docs/CACHING.md)              | Workspace caching — strategies, env vars, `symphony recipe` CLI, consent model |
 | [`SPEC.md`](SPEC.md)                              | Design document — protocol, contracts, conformance |
-| [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md)| Fork-specific deltas (GitHub Projects substitution, agent backends) |
+| [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md)| Fork-specific deltas (GitHub Projects substitution, agent backends, workspace caching) |
 | [`docs/DESIGN.md`](docs/DESIGN.md)                | Operator console visual system |
 | [`examples/WORKFLOW.example.md`](examples/WORKFLOW.example.md) | Full annotated workflow file |
 
@@ -88,8 +96,15 @@ GitHub Project (v2)            ~/.symphony/<hash>/
 node dist/src/cli.js --workflow ./WORKFLOW.md [--port 8787] [--once]
 node dist/src/cli-aggregator.js --config ./aggregator.yaml [--port 9000]
 ./scripts/setup.sh         # one-time install + build
-./scripts/init.sh          # interactive setup wizard
+./scripts/init.sh          # interactive setup wizard (add --no-eager-bootstrap to skip recipe priming)
 ./scripts/preflight.sh     # validate config + GitHub access without dispatching
+
+symphony recipe list                  # enumerate cached bootstrap recipes
+symphony recipe show <owner/repo>     # print recipe + manifest
+symphony recipe approve <owner/repo>  # promote .pending → final (review mode)
+symphony recipe regen <owner/repo>    # force regeneration on next dispatch
+symphony recipe quarantine <owner/repo> # disable the recipe (fall back to canned template)
+symphony recipe prune --force         # wipe all cached recipes
 ```
 
 After `npm link`, the bins are exposed as `symphony` and
@@ -107,6 +122,7 @@ After `npm link`, the bins are exposed as `symphony` and
 | Operator console (HTTP, dashboard, JSON API) | ✅ |
 | Alerting hooks (`hooks.on_event`) | ✅ |
 | Cross-daemon aggregator | ✅ |
+| Workspace caching (reference clone + LLM-authored recipes) | ✅ |
 | Linear tracker | ❌ (upstream only — not ported) |
 | Auth on the operator console | ❌ (loopback only by design) |
 | Token accounting absolute-vs-delta dedup | ❌ open work |

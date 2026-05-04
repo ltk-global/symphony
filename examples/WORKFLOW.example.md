@@ -28,16 +28,34 @@ polling:
 workspace:
   root: ~/symphony_workspaces
 
+  # Workspace caching: bare-clone reuse + LLM-authored bootstrap recipes.
+  # See docs/CACHING.md for the full reference. Strategies:
+  #   none           — no caching (after_create runs against an empty workspace)
+  #   reference_only — bare clone reuse (SYMPHONY_REPO_REF exported)
+  #   llm (default)  — reference clone + bootstrap recipe (SYMPHONY_RECIPE exported)
+  cache:
+    strategy: llm
+    review_required: false       # set true to gate new recipes behind `symphony recipe approve`
+    recipe_ttl_hours: 168        # regenerate after one week even if inputs unchanged
+
 hooks:
   # Clone the issue's repo into the workspace and check out a working branch.
   # ISSUE_* env vars are exported by the orchestrator before each hook runs.
+  # When workspace.cache.strategy != none, SYMPHONY_REPO_REF points at a bare
+  # reference clone we can borrow objects from to skip bytes-on-the-wire.
   after_create: |
     set -euo pipefail
     if [ -z "${ISSUE_REPO_FULL_NAME:-}" ]; then
       echo "no ISSUE_REPO_FULL_NAME (this is a draft item); skipping clone" >&2
       exit 0
     fi
-    git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git" .
+    if [ -n "${SYMPHONY_REPO_REF:-}" ] && [ -d "$SYMPHONY_REPO_REF" ]; then
+      git clone --reference "$SYMPHONY_REPO_REF" --dissociate \
+        "https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git" . \
+        || git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git" .
+    else
+      git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${ISSUE_REPO_FULL_NAME}.git" .
+    fi
     BRANCH="${ISSUE_BRANCH_NAME:-symphony/${ISSUE_WORKSPACE_KEY}}"
     git checkout -B "${BRANCH}"
 
@@ -47,6 +65,12 @@ hooks:
     if [ -d .git ]; then
       git fetch origin main --quiet || true
       git rebase origin/main || git rebase --abort || true
+    fi
+    # Apply the cached bootstrap recipe (npm ci / pnpm install / etc).
+    # SYMPHONY_RECIPE is set when workspace.cache.strategy=llm and a recipe
+    # exists; SYMPHONY_RECIPE_DISABLED=1 means it's pending operator review.
+    if [ -n "${SYMPHONY_RECIPE:-}" ] && [ -z "${SYMPHONY_RECIPE_DISABLED:-}" ] && [ -f "$SYMPHONY_RECIPE" ]; then
+      WORKSPACE="$ISSUE_WORKSPACE_PATH" source "$SYMPHONY_RECIPE"
     fi
 
   after_run: |
