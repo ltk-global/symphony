@@ -86,6 +86,21 @@ The cleanest pattern is a dedicated bot user: create a GitHub user, give
 it the scopes above, generate a fine-grained PAT for the daemon, and
 `gh auth login` as that user once on the host. One identity for both roles.
 
+The interactive wizard offers a guided walkthrough for this — when you
+leave the assignee filter blank at the "Filters" prompt, it asks if you
+want to set up a bot account now. The walkthrough prints deeplinks to
+GitHub's signup page, the org-invite page (when relevant), and the PAT
+generation page with the right scopes pre-checked, and validates each
+step (account exists? org member?) via the GraphQL API before moving on.
+GitHub doesn't allow API-driven user signup, so the actual account
+creation happens in your browser — but the wizard refuses to write a
+workflow that points at a non-existent user.
+
+If you provide an assignee that already exists, the wizard validates it
+on the spot (account exists + org membership for org-owned projects)
+rather than letting a typo silently produce a daemon that dispatches
+nothing.
+
 ### What the wizard writes
 
 Running `./scripts/init.sh` produces a `WORKFLOW.md` (path of your choosing,

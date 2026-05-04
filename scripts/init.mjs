@@ -24,6 +24,7 @@ import {
   addStatusOption,
 } from "./lib/status-field.mjs";
 import { graphql, parseProjectUrl } from "./lib/github-graphql.mjs";
+import { userExists, userIsOrgMember } from "./lib/bot-probe.mjs";
 import { tmpdir } from "node:os";
 import { resolve, dirname, join } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
@@ -47,6 +48,7 @@ const ok = (s) => out(`  ${C.green}✓${C.reset} ${s}`);
 const warn = (s) => out(`  ${C.yellow}!${C.reset} ${s}`);
 const fail = (s) => out(`  ${C.red}✗${C.reset} ${s}`);
 const info = (s) => out(`  ${C.dim}${s}${C.reset}`);
+const link = (url) => out(`    ${C.cyan}${url}${C.reset}`);
 
 const repoRoot = resolve(dirname(new URL(import.meta.url).pathname), "..");
 
@@ -226,9 +228,14 @@ async function main() {
   }
   ok(`${project.title} · ${project.url}`);
 
+  // Token-bound GraphQL closure threaded through every helper that needs
+  // to talk to GitHub for THIS project (status field probes, assignee
+  // validation, bot walkthrough). Built once so we don't rebuild it at
+  // each call site or end up passing `token` to every helper.
+  const projectGraphql = (query, variables) => graphql(token, query, variables);
+
   // ── 5. Confirm Status field ────────────────────────────
   head("Status field");
-  const projectGraphql = (query, variables) => graphql(token, query, variables);
   let statusField;
   try {
     statusField = await fetchStatusField(projectGraphql, project.id);
@@ -293,7 +300,16 @@ async function main() {
   // ── 6. Filtering ──────────────────────────────────────
   head("Filters");
   info("Strongly recommended: only dispatch issues assigned to a bot user.");
-  const assignee = (await ask(`Assignee filter (leave blank to dispatch all in active_states)`, { default: "" })).trim();
+  let assignee = (await ask(`Assignee filter (leave blank to dispatch all in active_states)`, { default: "" })).trim();
+  if (assignee) {
+    await validateAssignee(projectGraphql, assignee, project);
+  } else if (!WIZARD_FLAGS.yes) {
+    const setup = await askYesNo("No assignee filter set. Walk through bot-account setup now?", false);
+    if (setup) {
+      const botLogin = await setupBotWalkthrough(projectGraphql, project);
+      if (botLogin) assignee = botLogin;
+    }
+  }
   if (assignee) ok(`only items assigned to ${assignee}`);
   else warn("no assignee filter — Symphony will pick up every item in active_states");
 
@@ -788,6 +804,121 @@ async function maybeAddNeedsHumanOption(graphqlFn, fieldId, options, desiredName
     }
     return options;
   }
+}
+
+// Validate that a typed-in assignee actually exists on GitHub.
+// Best-effort: probe failures (rate limit, missing read:org scope, network)
+// warn-and-continue rather than abort, since the operator may know the
+// account is real even when our probe can't confirm. The wizard's preflight
+// will catch a truly broken config at parse time.
+//
+// (Asymmetric with setupBotWalkthrough's "retry on probe error" — by
+// design: there the operator is actively walking through, so retrying
+// makes sense; here the operator already knows the answer.)
+async function validateAssignee(projectGraphql, login, project) {
+  try {
+    const exists = await userExists(projectGraphql, login);
+    if (!exists) {
+      warn(`'${login}' is not a known GitHub user. Daemon will dispatch nothing.`);
+      const proceed = await askYesNo("Use this assignee anyway?", false);
+      if (!proceed) exit(1);
+      return;
+    }
+    const owner = project.owner?.login;
+    const isOrg = project.owner?.__typename === "Organization";
+    if (isOrg && owner) {
+      const isMember = await userIsOrgMember(projectGraphql, owner, login);
+      if (isMember) ok(`'${login}' exists and is a member of ${owner}`);
+      else warn(`'${login}' exists but is not a member of ${owner} — invite via https://github.com/orgs/${owner}/people`);
+    } else {
+      ok(`'${login}' exists on GitHub`);
+    }
+  } catch (error) {
+    warn(`couldn't validate assignee: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
+// Multi-step walkthrough that helps an operator set up a bot account.
+// Returns the validated bot login, or null if the operator abandoned.
+// GitHub does not allow API-driven user signup, so account creation is a
+// deeplink + pause; everything afterwards is validated via GraphQL before
+// moving on.
+async function setupBotWalkthrough(projectGraphql, project) {
+  const owner = project.owner?.login;
+  const isOrg = project.owner?.__typename === "Organization";
+  const tokenDescription = `symphony-${workflowSlug(project)}`;
+  const totalSteps = isOrg && owner ? 4 : owner ? 4 : 3;
+  const stepLabel = (n, title) => out(`  ${C.bold}Step ${n}/${totalSteps}.${C.reset} ${title}`);
+
+  out("");
+  info("GitHub doesn't allow API signup, so each step is a deeplink you click");
+  info("through in the browser; the wizard validates that step before moving on.");
+  out("");
+
+  stepLabel(1, "Create the bot's GitHub account");
+  link("https://github.com/signup");
+  info("    Tip: a + alias works (you+symphony@gmail.com).");
+  await ask("Press enter when the new account exists", { default: "" });
+
+  out("");
+  stepLabel(2, "Confirm the bot's username");
+  let botLogin = "";
+  while (true) {
+    botLogin = (await ask("Bot's GitHub username")).trim();
+    if (!botLogin) { warn("Required."); continue; }
+    try {
+      const exists = await userExists(projectGraphql, botLogin);
+      if (exists) { ok(`account exists: ${botLogin}`); break; }
+      warn(`No GitHub user named '${botLogin}'.`);
+      const retry = await askYesNo("Try a different username?", true);
+      if (!retry) return null;
+    } catch (error) {
+      warn(`probe failed: ${error instanceof Error ? error.message : error}`);
+      const retry = await askYesNo("Retry?", true);
+      if (!retry) return null;
+    }
+  }
+
+  if (isOrg && owner) {
+    out("");
+    stepLabel(3, `Invite ${botLogin} to the ${owner} org`);
+    link(`https://github.com/orgs/${owner}/people`);
+    info(`    Click "Invite member" and add '${botLogin}'.`);
+    info("    The bot must accept the invitation from its email before continuing.");
+    await ask("Press enter when the invitation is sent and accepted", { default: "" });
+    try {
+      const isMember = await userIsOrgMember(projectGraphql, owner, botLogin);
+      if (isMember) ok(`${botLogin} is a member of ${owner}`);
+      else {
+        warn(`${botLogin} is not yet a member of ${owner} (invitation pending?).`);
+        const proceed = await askYesNo("Continue anyway? (you can finish the invite flow later)", false);
+        if (!proceed) return null;
+      }
+    } catch (error) {
+      warn(`couldn't probe membership: ${error instanceof Error ? error.message : error}`);
+    }
+  } else if (owner) {
+    out("");
+    stepLabel(3, `Grant ${botLogin} access to the project`);
+    info(`    Project is owned by user '${owner}', not an org. Share the project with '${botLogin}' via the project's "Manage access" page in the GitHub UI.`);
+    link(`${project.url}/settings/access`);
+    await ask("Press enter when sharing is done", { default: "" });
+  }
+
+  out("");
+  stepLabel(totalSteps, "Generate a PAT for the bot");
+  out(`    Sign out, sign in as ${C.bold}${botLogin}${C.reset}, then open:`);
+  link(`https://github.com/settings/tokens/new?scopes=repo,project&description=${tokenDescription}`);
+  info("    Copy the token (starts with 'ghp_'); save it somewhere safe.");
+  await ask("Press enter when the PAT is generated and saved", { default: "" });
+
+  // Reminder — the daemon needs the BOT's token at runtime, not the operator's.
+  out("");
+  ok(`bot setup complete: ${C.bold}${botLogin}${C.reset}`);
+  info("When you start the daemon, export GITHUB_TOKEN to the BOT's PAT, not your own:");
+  info(`  ${C.bold}export GITHUB_TOKEN=ghp_<bot's token>${C.reset}`);
+  info("(Your token stays valid for now — preflight uses it to author + validate the workflow.)");
+  return botLogin;
 }
 
 async function resolveProjectByUrl(token, url) {
