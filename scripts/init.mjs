@@ -797,9 +797,12 @@ async function eagerBootstrapRecipe(repoFullName, token) {
     // the token without persisting it in `remote.origin.url`. Mirrors how
     // `WorkspaceManager.computeCacheEnv` handles the bare clone.
     const cloneUrl = `https://github.com/${repoFullName}.git`;
+    // Basic auth (base64 of `x-access-token:<token>`) — Bearer is rejected
+    // by GitHub for `gho_*` user-OAuth tokens. Mirrors src/workspace/refs.ts.
+    const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
     const args = [
       "-c",
-      `http.extraHeader=Authorization: Bearer ${token}`,
+      `http.extraHeader=Authorization: Basic ${basic}`,
       "clone", "--depth", "1", "--quiet",
       cloneUrl, tmp,
     ];
@@ -834,10 +837,10 @@ async function eagerBootstrapRecipe(repoFullName, token) {
       ok(`existing recipe reused (no LLM call): ${persisted.recipePath}`);
     }
   } catch (error) {
-    // execFileSync surfaces the full argv (including http.extraHeader=Bearer
-    // <token>) in error.message. Redact before logging.
+    // execFileSync surfaces the full argv (including http.extraHeader)
+    // in error.message. Redact both Bearer and Basic forms before logging.
     const raw = error instanceof Error ? error.message : String(error);
-    const safe = raw.replace(/Authorization: Bearer [^\s'"]+/g, "Authorization: Bearer ***REDACTED***");
+    const safe = raw.replace(/Authorization: (Bearer|Basic) [^\s'"]+/g, "Authorization: $1 ***REDACTED***");
     warn(`eager bootstrap failed: ${safe}`);
     info("Daemon will fall back to canned template until the operator runs `symphony recipe regen`.");
   } finally {
