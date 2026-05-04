@@ -301,30 +301,31 @@ async function main() {
   head("Filters");
   info("Strongly recommended: only dispatch issues assigned to a bot user.");
   let assignee = (await ask(`Assignee filter (leave blank to dispatch all in active_states)`, { default: "" })).trim();
-  // Whether we just walked the operator through bot-account setup. If so,
-  // the daemon must be started with the BOT's PAT, not the operator's
-  // GITHUB_TOKEN that we used for the wizard. We refuse to auto-launch in
-  // that case (see end of main()).
-  let walkedThroughBotSetup = false;
+  // When the bot walkthrough captured a PAT, that token is what the daemon
+  // will use at runtime — so subsequent project-state checks and preflight
+  // run under it (not the operator's token). Falsy → not walked, fall back
+  // to operator's token everywhere.
+  let botToken = null;
   if (assignee) {
-    assignee = await validateAssignee(projectGraphql, assignee, project);
+    assignee = await validateAssignee(projectGraphql, token, assignee, project);
   } else if (!WIZARD_FLAGS.yes) {
     const setup = await askYesNo("No assignee filter set. Walk through bot-account setup now?", false);
     if (setup) {
-      const botLogin = await setupBotWalkthrough(projectGraphql, project);
-      if (botLogin) {
-        assignee = botLogin;
-        walkedThroughBotSetup = true;
+      const result = await setupBotWalkthrough(projectGraphql, token, project);
+      if (result) {
+        assignee = result.botLogin;
+        botToken = result.botToken;
       }
     }
   }
+  const runtimeToken = botToken ?? token;
   if (assignee) ok(`only items assigned to ${assignee}`);
   else warn("no assignee filter — Symphony will pick up every item in active_states");
 
   // ── 6b. Project-state checks ──────────────────────────
   head("Project-state checks");
   info("Probing the project + linked repos so misconfigurations surface BEFORE the daemon starts.");
-  const checks = await runProjectChecks({ token, project, assignee: assignee || null, activeStates });
+  const checks = await runProjectChecks({ token: runtimeToken, project, assignee: assignee || null, activeStates });
   out(formatChecks(checks, { reset: C.reset, green: C.green, yellow: C.yellow, red: C.red, dim: C.dim }));
   if (checksFailed(checks)) {
     warn("Some checks failed. You can continue, but the daemon will likely hit these issues at runtime.");
@@ -540,7 +541,11 @@ async function main() {
   if (enableIris && !process.env.IRIS_TOKEN && irisToken) {
     info("IRIS_TOKEN captured this session — exported for the preflight subprocess.");
   }
-  const preflightEnv = { ...process.env, GITHUB_TOKEN: token };
+  // Preflight runs as the daemon WILL run — under the bot's PAT when the
+  // walkthrough captured one, otherwise under the operator's token. The
+  // wizard's other GitHub calls (workflow author etc.) keep using the
+  // operator's `token`.
+  const preflightEnv = { ...process.env, GITHUB_TOKEN: runtimeToken };
   if (enableIris && irisToken) preflightEnv.IRIS_TOKEN = irisToken;
   const preflightExit = await runStreamed(
     "node",
@@ -572,17 +577,17 @@ async function main() {
   out(`    node dist/src/cli.js --workflow ${C.dim}${workflowPath}${C.reset}${enableConsole ? ` --port ${port}` : ""}`);
   if (enableConsole) out(`  Then visit  ${C.cyan}http://127.0.0.1:${port}/${C.reset}`);
 
-  // Refuse to auto-start when the bot-setup walkthrough ran: we'd launch
-  // the daemon with the operator's GITHUB_TOKEN (still in `preflightEnv`),
-  // so verify-stage actions and tracker writes would post as the operator
-  // rather than the bot the operator just configured. The walkthrough
-  // already printed "export GITHUB_TOKEN=ghp_<bot's token>" — surface that
-  // instruction one more time and exit cleanly.
-  if (walkedThroughBotSetup) {
+  // Refuse to auto-start when the bot walkthrough captured a PAT: the
+  // wizard holds it in memory only, so we'd have to either spawn the
+  // daemon with that env (a one-shot) or let the operator export it
+  // properly themselves. The latter matches how every other secret in
+  // Symphony is handled — never write tokens to disk on the operator's
+  // behalf.
+  if (botToken) {
     out("");
     warn("Skipping auto-start: you just configured a bot account.");
     info(`Open a new shell, ${C.bold}export GITHUB_TOKEN=ghp_<bot's token>${C.reset}, then run the command above.`);
-    info("(The wizard's GITHUB_TOKEN is your personal one, used to author + validate the workflow.)");
+    info("(The wizard validated the bot PAT just now — preflight ran under it too.)");
     exit(0);
   }
   // Default true interactively, false in --yes mode (CI/scripted setup
@@ -840,7 +845,7 @@ async function maybeAddNeedsHumanOption(graphqlFn, fieldId, options, desiredName
 // failed (best-effort). Callers should write this back into the workflow
 // so a typo'd `Acme-Bot` (operator) vs `acme-bot` (GitHub) doesn't break
 // runtime issue.assignees matching.
-async function validateAssignee(projectGraphql, login, project) {
+async function validateAssignee(projectGraphql, token, login, project) {
   try {
     const canonical = await resolveUserLogin(projectGraphql, login);
     if (!canonical) {
@@ -854,7 +859,7 @@ async function validateAssignee(projectGraphql, login, project) {
     const isOrg = project.owner?.__typename === "Organization";
     if (isOrg && owner) {
       try {
-        const isMember = await userIsOrgMember(projectGraphql, owner, canonical);
+        const isMember = await userIsOrgMember(token, owner, canonical);
         if (isMember) ok(`'${canonical}' exists and is a member of ${owner}`);
         else warn(`'${canonical}' exists but is not a member of ${owner} — invite via https://github.com/orgs/${owner}/people`);
       } catch (error) {
@@ -875,7 +880,7 @@ async function validateAssignee(projectGraphql, login, project) {
 // GitHub does not allow API-driven user signup, so account creation is a
 // deeplink + pause; everything afterwards is validated via GraphQL before
 // moving on.
-async function setupBotWalkthrough(projectGraphql, project) {
+async function setupBotWalkthrough(projectGraphql, operatorToken, project) {
   const owner = project.owner?.login;
   const isOrg = project.owner?.__typename === "Organization";
   const tokenDescription = `symphony-${workflowSlug(project)}`;
@@ -924,7 +929,7 @@ async function setupBotWalkthrough(projectGraphql, project) {
     info("    The bot must accept the invitation from its email before continuing.");
     await ask("Press enter when the invitation is sent and accepted", { default: "" });
     try {
-      const isMember = await userIsOrgMember(projectGraphql, owner, botLogin);
+      const isMember = await userIsOrgMember(operatorToken, owner, botLogin);
       if (isMember) ok(`${botLogin} is a member of ${owner}`);
       else {
         warn(`${botLogin} is not yet a member of ${owner} (invitation pending?).`);
@@ -947,25 +952,40 @@ async function setupBotWalkthrough(projectGraphql, project) {
   out(`    Sign out, sign in as ${C.bold}${botLogin}${C.reset}, then open:`);
   link(`https://github.com/settings/tokens/new?scopes=repo,project&description=${tokenDescription}`);
   info("    Copy the token (starts with 'ghp_').");
-  // Paste back so we can confirm the PAT actually authenticates as the bot.
-  // Otherwise the wizard reports "validated" using the operator's token
-  // while the daemon would silently fail on first tick under the bot's PAT.
-  // The token is held in memory only — never written to disk by the wizard.
+  // Paste back so we can confirm the PAT (a) authenticates as the bot,
+  // (b) can actually see the project we just configured. Otherwise the
+  // wizard reports "validated" using the operator's token, then the
+  // daemon silently fails on first tick under a bot PAT that lacks
+  // `project` scope. The token is held in memory only — never written
+  // to disk by the wizard. The caller threads it into preflight + the
+  // project-state checks so the rest of the wizard runs as the bot.
+  let botToken = "";
   while (true) {
-    const botToken = await ask("Paste the bot's PAT (input hidden)", {
+    const pasted = await ask("Paste the bot's PAT (input hidden)", {
       hidden: true,
       validate: (v) => (v.length < 20 ? "Too short — paste the full token." : null),
     });
     try {
-      const probed = await graphql(botToken, `query { viewer { login } }`);
+      const probed = await graphql(pasted, `query { viewer { login } }`);
       const viewerLogin = probed?.viewer?.login;
       if (!viewerLogin) {
         warn("Token authenticated but viewer.login is empty — unusable.");
-      } else if (viewerLogin.toLowerCase() === botLogin.toLowerCase()) {
-        ok(`PAT authenticates as ${viewerLogin}`);
-        break;
-      } else {
+      } else if (viewerLogin.toLowerCase() !== botLogin.toLowerCase()) {
         warn(`PAT belongs to '${viewerLogin}', not '${botLogin}'.`);
+      } else {
+        ok(`PAT authenticates as ${viewerLogin}`);
+        // Project-access probe — confirms repo+project scopes against THIS project.
+        try {
+          const access = await graphql(pasted, `query($id: ID!) { node(id: $id) { ... on ProjectV2 { id, title } } }`, { id: project.id });
+          if (access?.node?.id === project.id) {
+            ok(`PAT can read the project (${access.node.title})`);
+            botToken = pasted;
+            break;
+          }
+          warn(`PAT authenticates but can't read the project — check 'project' scope and that ${botLogin} is a member of ${project.owner?.login ?? "the org"}.`);
+        } catch (error) {
+          warn(`PAT can't read the project: ${error instanceof Error ? error.message : error}`);
+        }
       }
     } catch (error) {
       warn(`PAT validation failed: ${error instanceof Error ? error.message : error}`);
@@ -974,15 +994,11 @@ async function setupBotWalkthrough(projectGraphql, project) {
     if (!retry) return null;
   }
 
-  // Reminder — the daemon needs the BOT's token at runtime, not the operator's.
   out("");
   ok(`bot setup complete: ${C.bold}${botLogin}${C.reset}`);
-  info("When you start the daemon, export GITHUB_TOKEN to the BOT's PAT, not your own:");
-  info(`  ${C.bold}export GITHUB_TOKEN=ghp_<bot's token>${C.reset}`);
-  info("(Your token stays valid for the rest of this wizard run — it authors and");
-  info("validates the workflow. The bot PAT was checked just now; a deeper");
-  info("preflight under the bot token runs after you re-export it.)");
-  return botLogin;
+  info("Project-state checks and preflight from here on use the bot's PAT.");
+  info(`To start the daemon yourself: ${C.bold}export GITHUB_TOKEN=ghp_<bot's token>${C.reset}`);
+  return { botLogin, botToken };
 }
 
 async function resolveProjectByUrl(token, url) {

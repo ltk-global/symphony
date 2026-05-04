@@ -11,19 +11,12 @@ const USER_EXISTS_QUERY = `
   }
 `;
 
-// `membersWithRole(query: ...)` returns matches by login prefix; we filter
-// the page client-side to require an exact case-insensitive match. The
-// page size of 5 keeps the response small while tolerating GitHub's "type
-// completion" style fuzzy match.
-const ORG_MEMBER_QUERY = `
-  query($org: String!, $login: String!) {
-    organization(login: $org) {
-      membersWithRole(query: $login, first: 5) {
-        nodes { login }
-      }
-    }
-  }
-`;
+// Org-membership probe via REST: `GET /orgs/<org>/members/<user>` returns
+// 204 (member) / 404 (not a member) / 302 (must auth). GraphQL's
+// `Organization.membersWithRole` does NOT accept a `query` arg per the
+// public schema, so prefix-match probes silently fail at the GraphQL
+// layer. REST is the only documented exact-match for this question short
+// of paginating every member of the org client-side.
 
 // Resolve a GitHub login to its canonical-cased form, or null if unknown.
 // `user(login:)` is case-insensitive but always returns the login in the
@@ -49,17 +42,22 @@ export async function userExists(graphql, login) {
   return Boolean(await resolveUserLogin(graphql, login));
 }
 
-export async function userIsOrgMember(graphql, org, login) {
-  const data = await graphql(ORG_MEMBER_QUERY, { org, login });
-  // organization === null means the operator's PAT can't see this org (rate
-  // limit, missing read:org scope, private org). That's NOT the same as "not
-  // a member", and callers need to be able to tell the difference. Throw
-  // rather than returning a false negative that misleads "exists but not a
-  // member of <org>" warnings.
-  if (data?.organization === null || data?.organization === undefined) {
-    throw new Error(`couldn't read org '${org}' (token may lack read:org scope, or org is private)`);
-  }
-  const nodes = data.organization.membersWithRole?.nodes ?? [];
-  const lc = login.toLowerCase();
-  return nodes.some((n) => n.login?.toLowerCase() === lc);
+export async function userIsOrgMember(token, org, login, { fetchImpl = globalThis.fetch } = {}) {
+  const url = `https://api.github.com/orgs/${encodeURIComponent(org)}/members/${encodeURIComponent(login)}`;
+  const resp = await fetchImpl(url, {
+    method: "GET",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "user-agent": "symphony-init/0.1",
+      accept: "application/vnd.github+json",
+    },
+    redirect: "manual",
+  });
+  if (resp.status === 204) return true;
+  if (resp.status === 404) return false;
+  // 302: caller is anonymous (token rejected). 403: caller can't see org
+  // membership (token lacks read:org, or this is a private membership we
+  // can't read). 401: bad token. None are the same as "not a member" —
+  // throw so callers can distinguish "couldn't probe" and warn cleanly.
+  throw new Error(`couldn't read org membership for '${login}' in '${org}': HTTP ${resp.status}`);
 }

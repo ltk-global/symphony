@@ -65,42 +65,47 @@ describe("userExists", () => {
 });
 
 describe("userIsOrgMember", () => {
-  it("returns true on an exact (case-insensitive) match", async () => {
-    const graphql = makeFakeGraphql([
-      ["membersWithRole", () => ({ organization: { membersWithRole: { nodes: [
-        { login: "Acme-Bot" },
-        { login: "acme-bot-secondary" },
-      ] } } })],
-    ]);
-    expect(await userIsOrgMember(graphql, "acme", "acme-bot")).toBe(true);
+  function makeFakeFetch(handler) {
+    const calls = [];
+    const fn = async (url, init) => {
+      calls.push({ url, init });
+      return handler(url, init);
+    };
+    fn.calls = calls;
+    return fn;
+  }
+
+  it("returns true on HTTP 204 (member)", async () => {
+    const fetchImpl = makeFakeFetch(() => ({ status: 204 }));
+    expect(await userIsOrgMember("ghp_x", "acme", "acme-bot", { fetchImpl })).toBe(true);
+    expect(fetchImpl.calls[0].url).toBe("https://api.github.com/orgs/acme/members/acme-bot");
   });
 
-  it("returns false when only prefix matches exist (no exact match)", async () => {
-    // GitHub's `query:` is fuzzy/prefix-based — must not accept "acme-bot-x"
-    // as evidence that "acme-bot" is a member.
-    const graphql = makeFakeGraphql([
-      ["membersWithRole", () => ({ organization: { membersWithRole: { nodes: [
-        { login: "acme-bot-staging" },
-        { login: "acme-bot-prod" },
-      ] } } })],
-    ]);
-    expect(await userIsOrgMember(graphql, "acme", "acme-bot")).toBe(false);
+  it("returns false on HTTP 404 (not a member)", async () => {
+    const fetchImpl = makeFakeFetch(() => ({ status: 404 }));
+    expect(await userIsOrgMember("ghp_x", "acme", "ghost", { fetchImpl })).toBe(false);
   });
 
-  it("returns false when the org has no matches", async () => {
-    const graphql = makeFakeGraphql([
-      ["membersWithRole", () => ({ organization: { membersWithRole: { nodes: [] } } })],
-    ]);
-    expect(await userIsOrgMember(graphql, "acme", "ghost")).toBe(false);
+  it("URL-encodes org and login (defends against weird org/login chars)", async () => {
+    const fetchImpl = makeFakeFetch(() => ({ status: 204 }));
+    await userIsOrgMember("t", "ac/me", "user with space", { fetchImpl });
+    expect(fetchImpl.calls[0].url).toBe("https://api.github.com/orgs/ac%2Fme/members/user%20with%20space");
   });
 
-  it("throws when the org isn't visible (null organization — rate limit / scope)", async () => {
-    // Distinguishes "user not a member" (returns false) from "couldn't probe"
-    // (throws). Otherwise validateAssignee would print a misleading
-    // "exists but not a member of X" on a transient API hiccup.
-    const graphql = makeFakeGraphql([
-      ["membersWithRole", () => ({ organization: null })],
-    ]);
-    await expect(userIsOrgMember(graphql, "no-such-org", "x")).rejects.toThrow(/couldn't read org/);
+  it("throws on 302 (token rejected, would auto-redirect to login page)", async () => {
+    const fetchImpl = makeFakeFetch(() => ({ status: 302 }));
+    await expect(userIsOrgMember("bad", "acme", "x", { fetchImpl })).rejects.toThrow(/HTTP 302/);
+  });
+
+  it("throws on 403 (token lacks read:org or membership is private)", async () => {
+    const fetchImpl = makeFakeFetch(() => ({ status: 403 }));
+    await expect(userIsOrgMember("ghp_x", "acme", "x", { fetchImpl })).rejects.toThrow(/HTTP 403/);
+  });
+
+  it("sends Authorization: Bearer + user-agent", async () => {
+    const fetchImpl = makeFakeFetch(() => ({ status: 204 }));
+    await userIsOrgMember("ghp_secret", "acme", "x", { fetchImpl });
+    expect(fetchImpl.calls[0].init.headers.authorization).toBe("Bearer ghp_secret");
+    expect(fetchImpl.calls[0].init.headers["user-agent"]).toContain("symphony-init");
   });
 });
