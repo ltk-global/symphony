@@ -227,7 +227,7 @@ The brief may name a style. If absent, use **status-driven** (the default).
 5. After the PR is open, transition the item to `Done`.
 ```
 
-If `iris.enabled` is true, replace step 5 with the verify section below.
+If `context.enableIris` is true, replace step 5 with the verify section below.
 The verify section's exact body depends on TWO independent context values:
 `context.verify.mode` (`static` vs `agent_output`) and whether
 `context.tunnel` is set. There are FOUR cases.

@@ -592,6 +592,7 @@ async function main() {
       workspaceRoot,
       verify,
       verifyTransitions,
+      tunnel: authorContext.tunnel,
     });
   }
   await writeFile(workflowPath, workflowSource, "utf8");
@@ -1390,10 +1391,30 @@ function renderWorkflow(opts) {
   lines.push("4. Run the project's tests + linter. Iterate until both pass locally.");
   lines.push("5. Open a PR with `gh pr create`. Body includes a summary + `Fixes {{ issue.identifier }}`.");
   if (opts.enableIris) {
-    lines.push("6. Wait for the preview deploy (`gh pr checks --watch`), extract the preview URL.");
-    lines.push("7. Print `VERIFY_REQUESTED` on its own line, then a JSON object as the LAST line:");
-    lines.push("   `{\"verify_url\": \"<preview-url>\", \"verify_ready\": true}`.");
-    lines.push("8. If verify fails, fix and emit `VERIFY_REQUESTED` again with the updated URL.");
+    if (opts.tunnel) {
+      // Localhost tunnel was provisioned. Agent must bring up the dev server
+      // first, then capture the public URL (or use the static one if present).
+      lines.push(`6. Bring up the project locally and capture the tunnel's public URL:`);
+      lines.push(`   - Start the dev server on port ${opts.tunnel.port} (use the project's start command — \`npm run dev\`, \`pnpm dev\`, \`bin/rails s -p ${opts.tunnel.port}\`, etc.). Run in the background and redirect output to a log file.`);
+      lines.push(`   - Confirm port ${opts.tunnel.port} is listening: \`nc -z localhost ${opts.tunnel.port}\`.`);
+      lines.push(`   - Confirm the tunnel script \`${opts.tunnel.scriptPath}\` is running. If you can't tell, ASSUME it is — the operator pre-flighted it.`);
+      if (opts.tunnel.url) {
+        lines.push(`   - The tunnel exposes a stable URL: \`${opts.tunnel.url}\`. Use that.`);
+      } else if (opts.tunnel.kind === "ngrok") {
+        lines.push("   - The tunnel URL is per-session. Capture it with: `curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url'`.");
+      } else if (opts.tunnel.kind === "cloudflared-quick" && opts.tunnel.logPath) {
+        lines.push(`   - The tunnel script tees its output to \`${opts.tunnel.logPath}\`. Capture the URL: \`grep -oE 'https://[a-z0-9-]+\\.trycloudflare\\.com' "${opts.tunnel.logPath}" | tail -1\`. If the file is empty/missing, the tunnel hasn't started yet — wait a few seconds and retry.`);
+      }
+      lines.push("7. Print `VERIFY_REQUESTED` on its own line, then a JSON object as the LAST line:");
+      lines.push("   `{\"verify_url\": \"<the-tunnel-url>\", \"verify_ready\": true}`.");
+      lines.push("8. The verify URL MUST be the tunnel's public URL — NOT a github.com URL. If verify fails, fix and emit `VERIFY_REQUESTED` again.");
+    } else {
+      // No tunnel — agent waits for a preview deploy from CI/CD.
+      lines.push("6. Wait for the preview deploy (`gh pr checks --watch`), extract the preview URL.");
+      lines.push("7. Print `VERIFY_REQUESTED` on its own line, then a JSON object as the LAST line:");
+      lines.push("   `{\"verify_url\": \"<preview-url>\", \"verify_ready\": true}`.");
+      lines.push("8. The verify URL MUST be the deployed app, not the GitHub PR page (rejected). If verify fails, fix and emit `VERIFY_REQUESTED` again.");
+    }
   } else {
     lines.push("6. After the PR is open and merged-or-ready, transition the item to a state your team uses for review.");
   }
