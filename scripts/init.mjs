@@ -644,7 +644,7 @@ async function main() {
   if (botToken) {
     out("");
     warn("Skipping auto-start: you just configured a bot account.");
-    if (secretsEnvFile) info(`Open a new shell, ${C.bold}source ${secretsEnvFile}${C.reset}, then run the command above.`);
+    if (secretsEnvFile) info(`In your shell, ${C.bold}source ${secretsEnvFile}${C.reset}, then run the command above.`);
     info("(The wizard validated the bot PAT just now — preflight ran under it too.)");
     exit(0);
   }
