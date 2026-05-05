@@ -5,7 +5,7 @@
 // optionally start the daemon. Read by humans first, code second — keep
 // prompts short and unambiguous.
 
-import { existsSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, statSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { authorWorkflow } from "./lib/workflow-author.mjs";
 import { authorRecipe } from "./lib/workspace-bootstrap.mjs";
@@ -481,8 +481,23 @@ async function main() {
 
   // ── 10. Write WORKFLOW.md ─────────────────────────────
   head("Writing WORKFLOW.md");
-  const workflowPath = resolve((await ask("Path for the workflow file", { default: "./WORKFLOW.md" })).trim());
+  let workflowPath = resolve((await ask("Path for the workflow file", { default: "./WORKFLOW.md" })).trim());
+  // If the operator pointed at an existing directory, treat it as a
+  // container — write `WORKFLOW.md` inside it. This matches how `cp` and
+  // `mv` handle directory destinations and avoids the EISDIR crash that
+  // otherwise hits at writeFile() after the workflow has already been
+  // authored by the LLM (wasted call).
+  if (existsSync(workflowPath) && statSync(workflowPath).isDirectory()) {
+    workflowPath = join(workflowPath, "WORKFLOW.md");
+    info(`directory provided — writing to ${workflowPath}`);
+  }
   if (existsSync(workflowPath)) {
+    if (statSync(workflowPath).isDirectory()) {
+      // Path resolved to a directory after the join above only if the user
+      // pointed at something like /etc/something-that-is-also-a-dir; bail clearly.
+      fail(`${workflowPath} is a directory, not a file`);
+      exit(1);
+    }
     const overwrite = await askYesNo(`${workflowPath} exists. Overwrite?`, false);
     if (!overwrite) { warn("Aborted."); exit(0); }
   }
