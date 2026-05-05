@@ -550,6 +550,18 @@ async function main() {
     irisProfile,
     verify,
     verifyTransitions,
+    // When the operator chose ngrok/cloudflared, surface the tunnel
+    // shape to the workflow author so the prompt body can include
+    // explicit "run your dev server on port N, capture the public URL"
+    // steps. Without this the agent falls back to emitting whatever
+    // URL is top-of-mind (often the just-opened PR — useless to IRIS).
+    tunnel: tunnelScript ? {
+      kind: tunnelScript.kind,         // "ngrok" | "cloudflared-quick" | "cloudflared-named"
+      port: tunnelScript.port,
+      scriptPath: tunnelScript.scriptPath,
+      command: tunnelScript.command,
+      url: tunnelScript.url ?? null,   // null → random URL; agent must discover
+    } : null,
     enableConsole,
     port,
     workspaceRoot,
@@ -614,7 +626,7 @@ async function main() {
 
   if (tunnelScript) {
     out(`\n  ${C.bold}${C.yellow}Tunnel:${C.reset} run this in a separate terminal BEFORE starting the daemon`);
-    out(`    ${C.bold}bash ${tunnelScript.path}${C.reset}`);
+    out(`    ${C.bold}bash ${tunnelScript.scriptPath}${C.reset}`);
     if (tunnelScript.url) out(`    Public URL: ${C.cyan}${tunnelScript.url}${C.reset}`);
     else out(`    Public URL: random — copy from the tunnel terminal once it prints`);
   }
@@ -826,7 +838,7 @@ async function setupCloudflared(slug) {
 }
 
 function generateTunnelScript({ slug, kind, port, command, url, notes }) {
-  const path = resolve(repoRoot, "scripts", `tunnel-${slug}.sh`);
+  const scriptPath = resolve(repoRoot, "scripts", `tunnel-${slug}.sh`);
   const lines = [
     "#!/usr/bin/env bash",
     `# Tunnel helper for Symphony · workflow slug: ${slug}`,
@@ -845,9 +857,9 @@ function generateTunnelScript({ slug, kind, port, command, url, notes }) {
     `exec ${command}`,
     "",
   ].filter((line) => line !== "" || true);
-  writeFileSync(path, lines.join("\n"), { mode: 0o755 });
-  ok(`wrote tunnel helper: ${path}`);
-  return { path, kind, port, command, url };
+  writeFileSync(scriptPath, lines.join("\n"), { mode: 0o755 });
+  ok(`wrote tunnel helper: ${scriptPath}`);
+  return { scriptPath, kind, port, command, url };
 }
 
 function workflowSlug(project) {

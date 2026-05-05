@@ -225,8 +225,78 @@ The brief may name a style. If absent, use **status-driven** (the default).
 3. Commit + push to a branch named `symphony/<sanitized-identifier>`.
 4. Open a PR with `gh pr create`. Body includes `Closes {{ issue.identifier }}`.
 5. After the PR is open, transition the item to `Done`.
-   {% if iris.enabled %}If IRIS is configured, instead emit `VERIFY_REQUESTED` plus
-   `{"verify_url": "<preview-url>"}` and let Symphony's verify stage drive the transition.{% endif %}
+```
+
+If `iris.enabled` is true, replace step 5 with the verify section below.
+The verify section's exact body depends on `context.verify.mode` and
+`context.tunnel`:
+
+#### `verify.mode == "static"` (operator-supplied URL)
+
+The verifier reaches the app at `verify.url_static` directly. The agent
+just needs to confirm the deploy is up:
+
+```markdown
+5. Once your PR's preview deploy is up at `<verify.url>`, emit `VERIFY_REQUESTED`
+   on its own line, then a JSON object on the very last line: `{"verify_url": "<verify.url>", "verify_ready": true}`.
+   Symphony's IRIS verify stage drives the rest.
+```
+
+#### `verify.mode == "agent_output"` AND `context.tunnel` is null
+
+No tunnel was configured; verify is going to need a deployed URL the
+agent itself supplies (typically a Vercel/Netlify preview triggered by
+the PR):
+
+```markdown
+5. Wait for the preview deploy. Most CI/CD posts a preview URL in a check
+   on the PR — poll with `gh pr checks --watch` until the deploy is `success`,
+   then read the URL from `gh pr view --json statusCheckRollup`.
+6. Emit `VERIFY_REQUESTED` on its own line, then a JSON object on the
+   very last line: `{"verify_url": "<the-deployed-app-url>", "verify_ready": true}`.
+
+The verify URL MUST be a URL where the running app is reachable — the
+deployed preview, not the GitHub PR page. The verifier rejects
+`github.com/...` URLs.
+```
+
+#### `verify.mode == "agent_output"` AND `context.tunnel` is set
+
+A localhost tunnel was provisioned by the wizard (`context.tunnel.kind`,
+local port `context.tunnel.port`). The agent runs the dev server,
+captures the tunnel's public URL, emits it.
+
+> **Note for the SKILL author** (you, claude, reading this now): the
+> placeholders `«context.X»` below are values to substitute into the
+> rendered output. The branching in *this* document is meta-instruction —
+> use it to decide which lines to emit. The output WORKFLOW.md should
+> contain plain text + ordinary Liquid (no `«»` placeholders left).
+
+Substitute `«context.tunnel.port»` and `«context.tunnel.scriptPath»` into
+this body verbatim. Then add ONE bullet for the URL discovery, choosing
+based on `context.tunnel.url` and `context.tunnel.kind`:
+
+- If `context.tunnel.url` is non-null: `- The tunnel exposes a stable URL: «context.tunnel.url». Use that.`
+- Else if `context.tunnel.kind == "ngrok"`: `- The tunnel URL is per-session. Capture it with: \`curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url'\`.`
+- Else if `context.tunnel.kind` is `cloudflared-quick` or `cloudflared-named`: `- The cloudflared script prints \`Your quick Tunnel has been created! Visit it at:\` followed by a *.trycloudflare.com URL. Tail the tunnel script's stdout and regex for \`https://[a-z0-9-]+\.trycloudflare\.com\`.`
+
+Body to emit (with substitutions applied and the discovery bullet inserted):
+
+```markdown
+5. Bring up the project locally and capture the tunnel's public URL:
+   - Start the dev server on port «context.tunnel.port» (use the project's
+     own start command — `npm run dev`, `pnpm dev`, `bin/rails s -p «context.tunnel.port»`,
+     etc.). Run it in the background with `&` and redirect output to a log file.
+   - Confirm port «context.tunnel.port» is listening: `nc -z localhost «context.tunnel.port»`.
+   - Confirm the tunnel script «context.tunnel.scriptPath» is running.
+     If you can't tell, ASSUME it is — the operator pre-flighted it.
+   - <URL discovery bullet, picked above>
+6. Emit `VERIFY_REQUESTED` on its own line, then a JSON object on the
+   very last line: `{"verify_url": "<the-tunnel-url>", "verify_ready": true}`.
+
+The verify URL MUST be the tunnel's public URL — NOT the PR page. The
+verifier rejects `github.com/...` URLs because IRIS would see only the
+GitHub diff page, not your running app.
 ```
 
 **comment-only**: agent never changes Status. Posts comments at start, PR-opened, and any blockers. Status flow is driven by Symphony's verify stage (when IRIS is on) or by humans.

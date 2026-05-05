@@ -84,10 +84,21 @@ export class VerifyStage {
     };
 
     const resolved = resolveVerifyUrl(input.issue, input.lastTurn, input.config);
-    if (!resolved) {
-      await emit("verify_no_url", { attemptedSources: normalizeSources(input.config.urlSource) });
+    // Surface every rejected candidate as its own event so the operator can
+    // see WHY the verifier fell through (e.g. agent emitted a PR URL).
+    // These fire even on success — knowing that the agent's URL was rejected
+    // and a label fallback won is useful signal.
+    for (const item of resolved.rejected) {
+      await emit("verify_url_rejected", item);
+    }
+    if (resolved.url === null) {
+      // Each rejected candidate already fired its own verify_url_rejected
+      // event above — don't duplicate the list on this summary event.
+      await emit("verify_no_url", {
+        attemptedSources: resolved.attemptedSources,
+      });
       await safeComment(
-        await render(input.config.onNoUrl.commentTemplate, { issue: input.issue, verify: { attempted_sources: normalizeSources(input.config.urlSource) } }),
+        await render(input.config.onNoUrl.commentTemplate, { issue: input.issue, verify: { attempted_sources: resolved.attemptedSources } }),
         "on_no_url",
       );
       await safeTransition(input.config.onNoUrl.transitionTo, "on_no_url");
@@ -151,21 +162,62 @@ export class VerifyStage {
   }
 }
 
+export type VerifyUrlRejection = { url: string; source: string; reason: string };
+
+// GitHub-served URLs (PR pages, gists, raw file content, github.dev) are
+// never the right answer for "is this change live?" — IRIS would just see
+// the rendered repo UI, not the deployed app. Reject them so the verifier
+// falls through to the next configured source rather than wasting an IRIS
+// call. The deny rule covers everything under github.com including
+// subdomains (gist, www, etc.), plus raw.githubusercontent.com and
+// github.dev which serve from different hosts. GitHub Pages
+// (`<owner>.github.io/...`) lives on a *different* TLD and passes through —
+// that's a legitimately deployed app.
+export function looksLikeBrokenVerifyUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    const isGitHubHosted =
+      host === "github.com" ||
+      host.endsWith(".github.com") ||
+      host === "raw.githubusercontent.com" ||
+      host === "github.dev";
+    if (isGitHubHosted) {
+      return `${host} cannot be browser-verified by IRIS (it serves the GitHub UI, not your app); emit the deployed-app URL instead`;
+    }
+  } catch {
+    // fall through — caller's validHttpUrl already gated obvious junk
+  }
+  return null;
+}
+
 export function resolveVerifyUrl(
   issue: Pick<Issue, "labels">,
   lastTurn: TurnTranscript,
   config: VerifyUrlConfig,
-): { url: string; source: string; attemptedSources: string[] } | null {
+): {
+  url: string;
+  source: string;
+  attemptedSources: string[];
+  rejected: VerifyUrlRejection[];
+} | { url: null; attemptedSources: string[]; rejected: VerifyUrlRejection[] } {
   const attemptedSources: string[] = [];
+  const rejected: VerifyUrlRejection[] = [];
   for (const source of normalizeSources(config.urlSource)) {
     attemptedSources.push(source);
     let url: string | null = null;
     if (source === "agent_output") url = parseAgentOutputUrl(lastTurn, config.agentOutputKey);
     if (source === "label") url = parseLabelUrl(issue.labels, config.urlLabelPrefix);
     if (source === "static") url = validHttpUrl(config.urlStatic) ? config.urlStatic : null;
-    if (url) return { url, source, attemptedSources: [...attemptedSources] };
+    if (!url) continue;
+    const reason = looksLikeBrokenVerifyUrl(url);
+    if (reason) {
+      rejected.push({ url, source, reason });
+      continue;
+    }
+    return { url, source, attemptedSources: [...attemptedSources], rejected };
   }
-  return null;
+  return { url: null, attemptedSources, rejected };
 }
 
 export function parseVerifyResult(output: string): { pass: boolean; summary: string; evidenceUrl?: string | null } {

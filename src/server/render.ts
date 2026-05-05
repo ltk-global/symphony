@@ -480,6 +480,7 @@ export function eventCategory(type: string): "ok" | "err" | "warn" | "info" | "n
     type === "retry_abandoned" ||
     type === "verify_retry" ||
     type === "verify_no_url" ||
+    type === "verify_url_rejected" ||
     type === "iris_call_limit_exceeded" ||
     type === "turn_input_required" ||
     type === "status_drift_detected"

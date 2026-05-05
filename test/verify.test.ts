@@ -19,7 +19,7 @@ describe("verify stage", () => {
         urlLabelPrefix: "deploy:",
         urlStatic: "",
       }),
-    ).toEqual({ url: "https://agent.example.com", source: "agent_output", attemptedSources: ["agent_output"] });
+    ).toMatchObject({ url: "https://agent.example.com", source: "agent_output", attemptedSources: ["agent_output"], rejected: [] });
 
     expect(
       resolveVerifyUrl(issue, { finalMessages: ["not-json"] }, {
@@ -29,6 +29,105 @@ describe("verify stage", () => {
         urlStatic: "",
       }),
     ).toMatchObject({ url: "https://preview.example.com", source: "label" });
+  });
+
+  it("rejects github.com URLs and falls through to the next source", () => {
+    // Agent emitted a PR URL (the bug we're guarding against). Verifier
+    // should skip it, fall through to label, and report the rejection.
+    const result = resolveVerifyUrl(
+      issue,
+      { finalMessages: ['{"verify_url":"https://github.com/acme/web/pull/15"}'] },
+      {
+        urlSource: ["agent_output", "label"],
+        agentOutputKey: "verify_url",
+        urlLabelPrefix: "deploy:",
+        urlStatic: "",
+      },
+    );
+    expect(result).toMatchObject({
+      url: "https://preview.example.com",
+      source: "label",
+      attemptedSources: ["agent_output", "label"],
+    });
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0]).toMatchObject({
+      url: "https://github.com/acme/web/pull/15",
+      source: "agent_output",
+    });
+    expect(result.rejected[0].reason).toMatch(/github\.com/);
+  });
+
+  it("returns no URL (with rejection log) when every source emits a github.com URL", () => {
+    const issueWithBadLabel = { ...issue, labels: ["deploy:https://github.com/acme/web/issues/1"] };
+    const result = resolveVerifyUrl(
+      issueWithBadLabel,
+      { finalMessages: ['{"verify_url":"https://github.com/acme/web/pull/15"}'] },
+      {
+        urlSource: ["agent_output", "label"],
+        agentOutputKey: "verify_url",
+        urlLabelPrefix: "deploy:",
+        urlStatic: "",
+      },
+    );
+    expect(result.url).toBeNull();
+    expect(result.rejected).toHaveLength(2);
+    expect(result.attemptedSources).toEqual(["agent_output", "label"]);
+  });
+
+  it("accepts non-github.com URLs and GitHub Pages URLs (different host)", () => {
+    const result = resolveVerifyUrl(
+      { labels: [] },
+      { finalMessages: ['{"verify_url":"https://acme.github.io/web/"}'] },
+      {
+        urlSource: ["agent_output"],
+        agentOutputKey: "verify_url",
+        urlLabelPrefix: "deploy:",
+        urlStatic: "",
+      },
+    );
+    expect(result.url).toBe("https://acme.github.io/web/");
+  });
+
+  it("rejects gist.github.com / raw.githubusercontent.com / github.dev", () => {
+    // P1 finding from review: original guard was github.com-only. These
+    // hosts all serve GitHub UI/content, never the deployed app.
+    for (const url of [
+      "https://gist.github.com/acme/abc123",
+      "https://raw.githubusercontent.com/acme/web/main/README.md",
+      "https://github.dev/acme/web/pull/15",
+    ]) {
+      const result = resolveVerifyUrl(
+        { labels: [] },
+        { finalMessages: [`{"verify_url":"${url}"}`] },
+        {
+          urlSource: ["agent_output"],
+          agentOutputKey: "verify_url",
+          urlLabelPrefix: "deploy:",
+          urlStatic: "",
+        },
+      );
+      expect(result.url, `${url} should be rejected`).toBeNull();
+      expect(result.rejected[0]?.url).toBe(url);
+    }
+  });
+
+  it("rejects a github.com URL via the static source too (defense in depth)", () => {
+    // Operator might write a verify.url_static that's a PR/issue URL — same
+    // shape of error, same rejection. Otherwise a misconfigured workflow
+    // skips the runtime guard.
+    const result = resolveVerifyUrl(
+      { labels: [] },
+      { finalMessages: [] },
+      {
+        urlSource: ["static"],
+        agentOutputKey: "verify_url",
+        urlLabelPrefix: "deploy:",
+        urlStatic: "https://github.com/acme/web/pull/15",
+      },
+    );
+    expect(result.url).toBeNull();
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0].source).toBe("static");
   });
 
   it("parses the last JSON line of an IRIS result", () => {
