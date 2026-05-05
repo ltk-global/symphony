@@ -286,7 +286,7 @@ based on `context.tunnel.url`, `context.tunnel.kind`, and
 
 - If `context.tunnel.url` is non-null: `- The tunnel exposes a stable URL: «context.tunnel.url». Use that.`
 - Else if `context.tunnel.kind == "ngrok"`: `- The tunnel URL is per-session. Capture it with: \`curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url'\`.`
-- Else if `context.tunnel.kind == "cloudflared-quick"` (and `logPath` is set): `- The tunnel script tees its output to «context.tunnel.logPath». Capture the URL: \`grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' «context.tunnel.logPath» | tail -1\`. If the file is empty/missing, the tunnel hasn't started yet — wait a few seconds and retry.`
+- Else if `context.tunnel.kind == "cloudflared-quick"` (and `logPath` is set): `- The tunnel script tees its output to «context.tunnel.logPath». Capture the URL: \`grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "«context.tunnel.logPath»" | tail -1\` (always wrap the path in double-quotes — it may contain spaces). If the file is empty/missing, the tunnel hasn't started yet — wait a few seconds and retry.`
 
 Body to emit (with substitutions applied and the discovery bullet inserted):
 

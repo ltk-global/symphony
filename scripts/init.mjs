@@ -838,6 +838,10 @@ async function setupCloudflared(slug) {
   return { script, url: null };
 }
 
+function shellSingleQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
 function generateTunnelScript({ slug, kind, port, command, url, notes }) {
   const scriptPath = resolve(repoRoot, "scripts", `tunnel-${slug}.sh`);
   // For tunnels with a dynamic URL (cloudflared-quick), the URL is only
@@ -848,8 +852,12 @@ function generateTunnelScript({ slug, kind, port, command, url, notes }) {
   // front and don't need one either.
   const needsLogTee = kind === "cloudflared-quick";
   const logPath = needsLogTee ? resolve(repoRoot, "scripts", `.tunnel-${slug}.log`) : null;
+  // Shell-quote logPath in case repoRoot contains spaces or other
+  // metacharacters (`/Users/Foo Bar/...` is common on macOS). Using
+  // single-quote form with the standard POSIX `'\''` escape for
+  // embedded single quotes.
   const runLine = needsLogTee
-    ? `${command} 2>&1 | tee ${logPath}`
+    ? `${command} 2>&1 | tee ${shellSingleQuote(logPath)}`
     : `exec ${command}`;
   const lines = [
     "#!/usr/bin/env bash",
