@@ -94,6 +94,8 @@ describe("verify stage", () => {
     for (const url of [
       "https://gist.github.com/acme/abc123",
       "https://raw.githubusercontent.com/acme/web/main/README.md",
+      "https://gist.githubusercontent.com/acme/abc123/raw/file.txt",
+      "https://avatars.githubusercontent.com/u/1234",
       "https://github.dev/acme/web/pull/15",
     ]) {
       const result = resolveVerifyUrl(

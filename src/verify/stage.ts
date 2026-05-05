@@ -180,7 +180,7 @@ export function looksLikeBrokenVerifyUrl(value: string): string | null {
     const isGitHubHosted =
       host === "github.com" ||
       host.endsWith(".github.com") ||
-      host === "raw.githubusercontent.com" ||
+      host.endsWith(".githubusercontent.com") || // raw, gist, avatars, objects, camo — all non-app
       host === "github.dev";
     if (isGitHubHosted) {
       return `${host} cannot be browser-verified by IRIS (it serves the GitHub UI, not your app); emit the deployed-app URL instead`;
