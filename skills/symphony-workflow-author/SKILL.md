@@ -228,25 +228,32 @@ The brief may name a style. If absent, use **status-driven** (the default).
 ```
 
 If `iris.enabled` is true, replace step 5 with the verify section below.
-The verify section's exact body depends on `context.verify.mode` and
-`context.tunnel`:
+The verify section's exact body depends on TWO independent context values:
+`context.verify.mode` (`static` vs `agent_output`) and whether
+`context.tunnel` is set. There are FOUR cases.
 
-#### `verify.mode == "static"` (operator-supplied URL)
+#### Case A — `verify.mode == "static"` AND `context.tunnel` is null
 
-The verifier reaches the app at `verify.url_static` directly. The agent
-just needs to confirm the deploy is up:
+The operator gave the wizard a fixed deployed URL (e.g. a staging
+hostname). The agent just needs to confirm the deploy is up:
 
 ```markdown
-5. Once your PR's preview deploy is up at `<verify.url>`, emit `VERIFY_REQUESTED`
-   on its own line, then a JSON object on the very last line: `{"verify_url": "<verify.url>", "verify_ready": true}`.
-   Symphony's IRIS verify stage drives the rest.
+5. Once your PR's preview deploy is up at `«verify.url»`, emit `VERIFY_REQUESTED`
+   on its own line, then a JSON object on the very last line:
+   `{"verify_url": "«verify.url»", "verify_ready": true}`.
 ```
 
-#### `verify.mode == "agent_output"` AND `context.tunnel` is null
+#### Case B — `verify.mode == "static"` AND `context.tunnel` is set
 
-No tunnel was configured; verify is going to need a deployed URL the
-agent itself supplies (typically a Vercel/Netlify preview triggered by
-the PR):
+A fixed tunnel URL (named cloudflared, fixed-domain ngrok). The verify
+URL is stable, but the agent still has to **bring up the local dev
+server** so the tunnel actually has something to forward to. Use the
+"agent_output with tunnel" body below, but pre-fill the URL as
+`«context.tunnel.url»` instead of asking the agent to discover one.
+
+#### Case C — `verify.mode == "agent_output"` AND `context.tunnel` is null
+
+No tunnel; the agent's preview comes from CI/CD (Vercel/Netlify/etc.):
 
 ```markdown
 5. Wait for the preview deploy. Most CI/CD posts a preview URL in a check
@@ -260,7 +267,7 @@ deployed preview, not the GitHub PR page. The verifier rejects
 `github.com/...` URLs.
 ```
 
-#### `verify.mode == "agent_output"` AND `context.tunnel` is set
+#### Case D — `verify.mode == "agent_output"` AND `context.tunnel` is set
 
 A localhost tunnel was provisioned by the wizard (`context.tunnel.kind`,
 local port `context.tunnel.port`). The agent runs the dev server,
@@ -274,11 +281,12 @@ captures the tunnel's public URL, emits it.
 
 Substitute `«context.tunnel.port»` and `«context.tunnel.scriptPath»` into
 this body verbatim. Then add ONE bullet for the URL discovery, choosing
-based on `context.tunnel.url` and `context.tunnel.kind`:
+based on `context.tunnel.url`, `context.tunnel.kind`, and
+`context.tunnel.logPath`:
 
 - If `context.tunnel.url` is non-null: `- The tunnel exposes a stable URL: «context.tunnel.url». Use that.`
 - Else if `context.tunnel.kind == "ngrok"`: `- The tunnel URL is per-session. Capture it with: \`curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url'\`.`
-- Else if `context.tunnel.kind` is `cloudflared-quick` or `cloudflared-named`: `- The cloudflared script prints \`Your quick Tunnel has been created! Visit it at:\` followed by a *.trycloudflare.com URL. Tail the tunnel script's stdout and regex for \`https://[a-z0-9-]+\.trycloudflare\.com\`.`
+- Else if `context.tunnel.kind == "cloudflared-quick"` (and `logPath` is set): `- The tunnel script tees its output to «context.tunnel.logPath». Capture the URL: \`grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' «context.tunnel.logPath» | tail -1\`. If the file is empty/missing, the tunnel hasn't started yet — wait a few seconds and retry.`
 
 Body to emit (with substitutions applied and the discovery bullet inserted):
 

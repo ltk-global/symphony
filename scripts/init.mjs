@@ -561,6 +561,7 @@ async function main() {
       scriptPath: tunnelScript.scriptPath,
       command: tunnelScript.command,
       url: tunnelScript.url ?? null,   // null → random URL; agent must discover
+      logPath: tunnelScript.logPath ?? null, // file containing tunnel stdout (cloudflared-quick only)
     } : null,
     enableConsole,
     port,
@@ -839,6 +840,17 @@ async function setupCloudflared(slug) {
 
 function generateTunnelScript({ slug, kind, port, command, url, notes }) {
   const scriptPath = resolve(repoRoot, "scripts", `tunnel-${slug}.sh`);
+  // For tunnels with a dynamic URL (cloudflared-quick), the URL is only
+  // visible in the tunnel process's stdout — the agent can't tail another
+  // terminal. Tee the output to a known log path so the agent's own shell
+  // can grep it. ngrok has its own local API (127.0.0.1:4040) so it
+  // doesn't need a log file. Named/static tunnels have a known URL up
+  // front and don't need one either.
+  const needsLogTee = kind === "cloudflared-quick";
+  const logPath = needsLogTee ? resolve(repoRoot, "scripts", `.tunnel-${slug}.log`) : null;
+  const runLine = needsLogTee
+    ? `${command} 2>&1 | tee ${logPath}`
+    : `exec ${command}`;
   const lines = [
     "#!/usr/bin/env bash",
     `# Tunnel helper for Symphony · workflow slug: ${slug}`,
@@ -852,14 +864,15 @@ function generateTunnelScript({ slug, kind, port, command, url, notes }) {
     `# Provider: ${kind}`,
     `# Local port: ${port}`,
     url ? `# Public URL: ${url}` : "# Public URL: random — printed below when tunnel comes up",
+    logPath ? `# URL also tee'd to: ${logPath}` : "",
     notes ? `# Note: ${notes}` : "",
     "",
-    `exec ${command}`,
+    runLine,
     "",
-  ].filter((line) => line !== "" || true);
+  ].filter(Boolean);
   writeFileSync(scriptPath, lines.join("\n"), { mode: 0o755 });
   ok(`wrote tunnel helper: ${scriptPath}`);
-  return { scriptPath, kind, port, command, url };
+  return { scriptPath, kind, port, command, url, logPath };
 }
 
 function workflowSlug(project) {

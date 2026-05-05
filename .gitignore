@@ -9,3 +9,5 @@ firebase-debug.log
 scripts/.*-secrets.env
 # wizard-generated tunnel helpers (operator-specific URLs)
 scripts/tunnel-*.sh
+# tunnel stdout log (for cloudflared-quick URL discovery)
+scripts/.tunnel-*.log
